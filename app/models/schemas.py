@@ -72,3 +72,18 @@ class DocumentDeleteResponse(BaseModel):
     document_id: str
     chunks_deleted: int
     status: str = "deleted"
+
+
+class ChunkInfo(BaseModel):
+    content: str
+    chunk_index: int
+    char_start: int
+    char_end: int
+
+
+class DocumentChunksResponse(BaseModel):
+    document_id: str
+    filename: str
+    source_type: str
+    chunk_count: int
+    chunks: list[ChunkInfo]

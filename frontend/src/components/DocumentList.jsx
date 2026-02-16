@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { listDocuments, deleteDocument } from '../api';
 import StatusMessage from './StatusMessage';
+import DocumentDetail from './DocumentDetail';
 import './DocumentList.css';
 
 export default function DocumentList() {
@@ -8,6 +9,7 @@ export default function DocumentList() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [filter, setFilter] = useState('');
+  const [selectedDoc, setSelectedDoc] = useState(null);
 
   async function fetchDocs() {
     setLoading(true);
@@ -38,6 +40,15 @@ export default function DocumentList() {
   function formatDate(dateStr) {
     if (!dateStr) return '-';
     return new Date(dateStr).toLocaleDateString();
+  }
+
+  if (selectedDoc) {
+    return (
+      <DocumentDetail
+        doc={selectedDoc}
+        onBack={() => setSelectedDoc(null)}
+      />
+    );
   }
 
   const needle = filter.toLowerCase();
@@ -111,7 +122,11 @@ export default function DocumentList() {
           </thead>
           <tbody>
             {filteredDocs.map((doc) => (
-              <tr key={doc.document_id}>
+              <tr
+                key={doc.document_id}
+                className="doc-row-clickable"
+                onClick={() => setSelectedDoc(doc)}
+              >
                 <td>{doc.filename}</td>
                 <td>{doc.source_type}</td>
                 <td>{doc.chunk_count}</td>
@@ -119,7 +134,10 @@ export default function DocumentList() {
                 <td>
                   <button
                     className="delete-btn"
-                    onClick={() => handleDelete(doc.document_id, doc.filename)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDelete(doc.document_id, doc.filename);
+                    }}
                   >
                     Delete
                   </button>

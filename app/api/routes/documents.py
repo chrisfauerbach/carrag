@@ -4,6 +4,8 @@ from app.models.schemas import (
     DocumentListResponse,
     DocumentDetailResponse,
     DocumentDeleteResponse,
+    DocumentChunksResponse,
+    ChunkInfo,
     DocumentInfo,
 )
 from app.services.elasticsearch import es_service
@@ -28,6 +30,23 @@ async def get_document(document_id: str):
     if doc is None:
         raise HTTPException(404, "Document not found")
     return DocumentDetailResponse(**doc)
+
+
+@router.get("/{document_id}/chunks", response_model=DocumentChunksResponse)
+async def get_document_chunks(document_id: str):
+    """Get all chunks for a document."""
+    doc = await es_service.get_document(document_id)
+    if doc is None:
+        raise HTTPException(404, "Document not found")
+
+    chunks = await es_service.get_document_chunks(document_id)
+    return DocumentChunksResponse(
+        document_id=document_id,
+        filename=doc["filename"],
+        source_type=doc["source_type"],
+        chunk_count=len(chunks),
+        chunks=[ChunkInfo(**c) for c in chunks],
+    )
 
 
 @router.delete("/{document_id}", response_model=DocumentDeleteResponse)

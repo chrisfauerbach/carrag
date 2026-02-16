@@ -172,6 +172,19 @@ class ElasticsearchService:
             "created_at": hits[0]["_source"].get("created_at"),
         }
 
+    async def get_document_chunks(self, document_id: str) -> list[dict]:
+        """Get all chunks for a document, sorted by chunk_index."""
+        resp = await self.client.search(
+            index=settings.es_index,
+            body={
+                "query": {"term": {"document_id": document_id}},
+                "_source": ["content", "chunk_index", "char_start", "char_end"],
+                "sort": [{"chunk_index": "asc"}],
+                "size": 10000,
+            },
+        )
+        return [hit["_source"] for hit in resp["hits"]["hits"]]
+
     async def delete_document(self, document_id: str) -> int:
         """Delete all chunks belonging to a document. Returns count of deleted docs."""
         resp = await self.client.delete_by_query(

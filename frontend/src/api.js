@@ -39,3 +39,7 @@ export async function listDocuments() {
 export async function deleteDocument(id) {
   return request(`/documents/${id}`, { method: 'DELETE' });
 }
+
+export async function getDocumentChunks(id) {
+  return request(`/documents/${id}/chunks`);
+}

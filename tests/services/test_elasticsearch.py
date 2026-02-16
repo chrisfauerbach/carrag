@@ -188,6 +188,41 @@ class TestGetDocument:
         assert result is None
 
 
+class TestGetDocumentChunks:
+    async def test_returns_sorted_chunks(self, service, mock_es_client):
+        mock_es_client.search.return_value = {
+            "hits": {
+                "hits": [
+                    {"_source": {"content": "first", "chunk_index": 0, "char_start": 0, "char_end": 5}},
+                    {"_source": {"content": "second", "chunk_index": 1, "char_start": 5, "char_end": 11}},
+                ]
+            }
+        }
+        chunks = await service.get_document_chunks("doc-1")
+        assert len(chunks) == 2
+        assert chunks[0]["content"] == "first"
+        assert chunks[0]["chunk_index"] == 0
+        assert chunks[1]["content"] == "second"
+
+    async def test_empty_results(self, service, mock_es_client):
+        mock_es_client.search.return_value = {"hits": {"hits": []}}
+        chunks = await service.get_document_chunks("nonexistent")
+        assert chunks == []
+
+    async def test_excludes_embedding(self, service, mock_es_client):
+        mock_es_client.search.return_value = {"hits": {"hits": []}}
+        await service.get_document_chunks("doc-1")
+        call_kwargs = mock_es_client.search.call_args[1]
+        source_fields = call_kwargs["body"]["_source"]
+        assert "embedding" not in source_fields
+
+    async def test_sorts_by_chunk_index(self, service, mock_es_client):
+        mock_es_client.search.return_value = {"hits": {"hits": []}}
+        await service.get_document_chunks("doc-1")
+        call_kwargs = mock_es_client.search.call_args[1]
+        assert call_kwargs["body"]["sort"] == [{"chunk_index": "asc"}]
+
+
 class TestDeleteDocument:
     async def test_returns_deleted_count(self, service, mock_es_client):
         mock_es_client.delete_by_query.return_value = {"deleted": 5}

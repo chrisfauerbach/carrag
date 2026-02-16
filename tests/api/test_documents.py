@@ -47,6 +47,43 @@ class TestGetDocument:
         assert "metadata" in data
 
 
+class TestGetDocumentChunks:
+    async def test_returns_chunks(self, app_client):
+        resp = await app_client.get("/documents/doc-123/chunks")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["document_id"] == "doc-123"
+        assert data["filename"] == "test.txt"
+        assert data["source_type"] == "text"
+        assert data["chunk_count"] == 3
+        assert len(data["chunks"]) == 3
+
+    async def test_chunk_shape(self, app_client):
+        resp = await app_client.get("/documents/doc-123/chunks")
+        chunk = resp.json()["chunks"][0]
+        assert "content" in chunk
+        assert "chunk_index" in chunk
+        assert "char_start" in chunk
+        assert "char_end" in chunk
+
+    async def test_not_found(self, app_client):
+        app_client._mock_es.get_document.return_value = None
+        resp = await app_client.get("/documents/nonexistent/chunks")
+        assert resp.status_code == 404
+
+    async def test_calls_both_service_methods(self, app_client):
+        await app_client.get("/documents/doc-123/chunks")
+        app_client._mock_es.get_document.assert_called_with("doc-123")
+        app_client._mock_es.get_document_chunks.assert_called_with("doc-123")
+
+    async def test_empty_chunks(self, app_client):
+        app_client._mock_es.get_document_chunks.return_value = []
+        resp = await app_client.get("/documents/doc-123/chunks")
+        data = resp.json()
+        assert data["chunk_count"] == 0
+        assert data["chunks"] == []
+
+
 class TestDeleteDocument:
     async def test_delete_found(self, app_client):
         resp = await app_client.delete("/documents/doc-123")

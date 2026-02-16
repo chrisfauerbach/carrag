@@ -50,6 +50,11 @@ def mock_es_service():
         "metadata": {"filename": "test.txt", "source_type": "text"},
         "created_at": "2026-01-01T00:00:00+00:00",
     })
+    svc.get_document_chunks = AsyncMock(return_value=[
+        {"content": "chunk text 1", "chunk_index": 0, "char_start": 0, "char_end": 12},
+        {"content": "chunk text 2", "chunk_index": 1, "char_start": 12, "char_end": 24},
+        {"content": "chunk text 3", "chunk_index": 2, "char_start": 24, "char_end": 36},
+    ])
     svc.delete_document = AsyncMock(return_value=3)
     svc.close = AsyncMock()
     return svc

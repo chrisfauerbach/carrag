@@ -53,6 +53,14 @@
   border-bottom: none;
 }
 
+.doc-row-clickable {
+  cursor: pointer;
+}
+
+.doc-row-clickable:hover td {
+  background: var(--color-surface);
+}
+
 .delete-btn {
   padding: 4px 10px;
   background: none;
