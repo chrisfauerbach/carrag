@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     chunk_size: int = 2000
     chunk_overlap: int = 200
     es_index: str = "carrag_chunks"
+    es_chat_index: str = "carrag_chats"
 
 
 settings = Settings()

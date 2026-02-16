@@ -1,9 +1,10 @@
 """Tests for app.services.rag — RAG pipeline orchestration."""
 
+import json
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 
-from app.services.rag import query_rag, SYSTEM_PROMPT
+from app.services.rag import query_rag, query_rag_stream, _prepare_rag_context, SYSTEM_PROMPT
 
 
 FAKE_VECTOR = [0.1] * 768
@@ -53,6 +54,36 @@ def mock_ollama_generate():
         yield mock_client
 
 
+class TestPrepareRagContext:
+    async def test_returns_prompt_sources_model(self, mock_services):
+        prompt, system_prompt, sources, llm_model = await _prepare_rag_context("What is X?")
+
+        assert "What is X?" in prompt
+        assert "[Source 1: doc.txt]" in prompt
+        assert system_prompt == SYSTEM_PROMPT
+        assert len(sources) == 2
+        assert sources[0]["content"] == "First chunk content."
+        assert llm_model == "llama3.2"
+
+    async def test_custom_model(self, mock_services):
+        _, _, _, llm_model = await _prepare_rag_context("Q?", model="custom-model")
+        assert llm_model == "custom-model"
+
+    async def test_history_in_prompt(self, mock_services):
+        history = [
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": "Hi there"},
+        ]
+        prompt, _, _, _ = await _prepare_rag_context("Follow up?", history=history)
+        assert "Conversation history:" in prompt
+        assert "User: Hello" in prompt
+
+    async def test_custom_top_k(self, mock_services):
+        mock_embed, mock_es = mock_services
+        await _prepare_rag_context("Q?", top_k=10)
+        mock_es.knn_search.assert_called_once_with(FAKE_VECTOR, top_k=10)
+
+
 class TestQueryRag:
     async def test_full_pipeline(self, mock_services, mock_ollama_generate):
         mock_embed, mock_es = mock_services
@@ -62,7 +93,7 @@ class TestQueryRag:
         assert len(result["sources"]) == 2
         assert result["model"] == "llama3.2"
         assert "duration_ms" in result
-        mock_embed.embed_single.assert_called_once_with("What is X?")
+        mock_embed.embed_single.assert_called_once_with("What is X?", prefix="search_query: ")
         mock_es.knn_search.assert_called_once()
 
     async def test_prompt_contains_context(self, mock_services, mock_ollama_generate):
@@ -148,3 +179,120 @@ class TestQueryRag:
     async def test_default_model_from_settings(self, mock_services, mock_ollama_generate):
         result = await query_rag("Q?")
         assert result["model"] == "llama3.2"
+
+
+class AsyncIteratorMock:
+    """Helper to mock async line iterator for Ollama streaming."""
+
+    def __init__(self, lines):
+        self._lines = iter(lines)
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        try:
+            return next(self._lines)
+        except StopIteration:
+            raise StopAsyncIteration
+
+
+class TestQueryRagStream:
+    @pytest.fixture
+    def mock_ollama_stream(self):
+        """Patch httpx.AsyncClient for streaming Ollama responses."""
+        with patch("app.services.rag.httpx.AsyncClient") as MockClient:
+            mock_client = AsyncMock()
+            MockClient.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            MockClient.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            mock_resp = MagicMock()
+            mock_resp.raise_for_status = MagicMock()
+
+            # Default NDJSON lines simulating Ollama streaming
+            mock_resp.aiter_lines.return_value = AsyncIteratorMock([
+                json.dumps({"response": "The", "done": False}),
+                json.dumps({"response": " answer", "done": False}),
+                json.dumps({"response": "", "done": True}),
+            ])
+
+            mock_stream_ctx = MagicMock()
+            mock_stream_ctx.__aenter__ = AsyncMock(return_value=mock_resp)
+            mock_stream_ctx.__aexit__ = AsyncMock(return_value=False)
+            # stream() is a regular method returning an async context manager
+            mock_client.stream = MagicMock(return_value=mock_stream_ctx)
+
+            yield mock_resp
+
+    async def test_full_event_sequence(self, mock_services, mock_ollama_stream):
+        events = []
+        async for event in query_rag_stream("What is X?"):
+            events.append(event)
+
+        assert events[0]["type"] == "sources"
+        assert len(events[0]["data"]["sources"]) == 2
+
+        tokens = [e for e in events if e["type"] == "token"]
+        assert len(tokens) == 2
+        assert tokens[0]["data"]["token"] == "The"
+        assert tokens[1]["data"]["token"] == " answer"
+
+        done_events = [e for e in events if e["type"] == "done"]
+        assert len(done_events) == 1
+        assert done_events[0]["data"]["model"] == "llama3.2"
+        assert "duration_ms" in done_events[0]["data"]
+
+    async def test_empty_tokens_skipped(self, mock_services, mock_ollama_stream):
+        mock_ollama_stream.aiter_lines.return_value = AsyncIteratorMock([
+            json.dumps({"response": "Hello", "done": False}),
+            json.dumps({"response": "", "done": False}),
+            json.dumps({"response": " world", "done": False}),
+            json.dumps({"response": "", "done": True}),
+        ])
+
+        events = []
+        async for event in query_rag_stream("Q?"):
+            events.append(event)
+
+        tokens = [e for e in events if e["type"] == "token"]
+        assert len(tokens) == 2
+        assert tokens[0]["data"]["token"] == "Hello"
+        assert tokens[1]["data"]["token"] == " world"
+
+    async def test_blank_lines_skipped(self, mock_services, mock_ollama_stream):
+        mock_ollama_stream.aiter_lines.return_value = AsyncIteratorMock([
+            "",
+            json.dumps({"response": "Hi", "done": False}),
+            "   ",
+            json.dumps({"response": "", "done": True}),
+        ])
+
+        events = []
+        async for event in query_rag_stream("Q?"):
+            events.append(event)
+
+        tokens = [e for e in events if e["type"] == "token"]
+        assert len(tokens) == 1
+        assert tokens[0]["data"]["token"] == "Hi"
+
+    async def test_error_propagates(self, mock_services):
+        with patch("app.services.rag.httpx.AsyncClient") as MockClient:
+            mock_client = AsyncMock()
+            MockClient.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            MockClient.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            mock_resp = MagicMock()
+            mock_resp.raise_for_status.side_effect = Exception("Ollama stream error")
+            mock_stream_ctx = MagicMock()
+            mock_stream_ctx.__aenter__ = AsyncMock(return_value=mock_resp)
+            mock_stream_ctx.__aexit__ = AsyncMock(return_value=False)
+            mock_client.stream = MagicMock(return_value=mock_stream_ctx)
+
+            events = []
+            with pytest.raises(Exception, match="Ollama stream error"):
+                async for event in query_rag_stream("Q?"):
+                    events.append(event)
+
+            # Sources should have been yielded before the error
+            assert len(events) == 1
+            assert events[0]["type"] == "sources"

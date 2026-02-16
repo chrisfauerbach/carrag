@@ -1,6 +1,7 @@
-import { useState, useRef, useEffect } from 'react';
-import { queryDocuments, getModels } from '../api';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { queryDocuments, queryDocumentsStream, getModels, createChat, getChat } from '../api';
 import ChatMessage from './ChatMessage';
+import ChatSidebar from './ChatSidebar';
 import StatusMessage from './StatusMessage';
 import './QueryPanel.css';
 
@@ -14,8 +15,11 @@ export default function QueryPanel() {
   const [loading, setLoading] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState('');
+  const [activeChatId, setActiveChatId] = useState(null);
+  const [sidebarRefreshKey, setSidebarRefreshKey] = useState(0);
   const timerRef = useRef(null);
   const chatEndRef = useRef(null);
+  const abortRef = useRef(null);
 
   useEffect(() => {
     getModels()
@@ -27,7 +31,10 @@ export default function QueryPanel() {
   }, []);
 
   useEffect(() => {
-    return () => clearInterval(timerRef.current);
+    return () => {
+      clearInterval(timerRef.current);
+      abortRef.current?.abort();
+    };
   }, []);
 
   useEffect(() => {
@@ -35,10 +42,12 @@ export default function QueryPanel() {
   }, [messages, loading]);
 
   function buildHistory() {
-    return messages.map((m) => ({ role: m.role, content: m.content }));
+    return messages
+      .filter((m) => !m.streaming)
+      .map((m) => ({ role: m.role, content: m.content }));
   }
 
-  async function handleSend() {
+  const handleSend = useCallback(async () => {
     const question = input.trim();
     if (!question) return;
 
@@ -54,24 +63,110 @@ export default function QueryPanel() {
       setElapsed(((Date.now() - start) / 1000).toFixed(1));
     }, 100);
 
-    try {
-      const history = buildHistory();
-      const data = await queryDocuments(question, topK, history, selectedModel || null);
-      const assistantMsg = {
-        role: 'assistant',
-        content: data.answer,
-        sources: data.sources,
-        model: data.model,
-        duration_ms: data.duration_ms,
-      };
-      setMessages((prev) => [...prev, assistantMsg]);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      clearInterval(timerRef.current);
-      setLoading(false);
+    const history = buildHistory();
+    const abortController = new AbortController();
+    abortRef.current = abortController;
+
+    // Create a chat session if we don't have one
+    let chatId = activeChatId;
+    if (!chatId) {
+      try {
+        const chat = await createChat();
+        chatId = chat.chat_id;
+        setActiveChatId(chatId);
+      } catch {}
     }
-  }
+
+    // Add placeholder assistant message for streaming
+    const placeholderIdx = messages.length + 1; // +1 for the user message we just added
+    setMessages((prev) => [
+      ...prev,
+      { role: 'assistant', content: '', streaming: true },
+    ]);
+
+    let streamFailed = false;
+
+    try {
+      await queryDocumentsStream(question, {
+        topK,
+        history,
+        model: selectedModel || null,
+        chatId,
+        signal: abortController.signal,
+        onToken: (token) => {
+          setMessages((prev) => {
+            const updated = [...prev];
+            const msg = updated[placeholderIdx];
+            if (msg) {
+              updated[placeholderIdx] = { ...msg, content: msg.content + token };
+            }
+            return updated;
+          });
+        },
+        onSources: (sources) => {
+          setMessages((prev) => {
+            const updated = [...prev];
+            const msg = updated[placeholderIdx];
+            if (msg) {
+              updated[placeholderIdx] = { ...msg, sources };
+            }
+            return updated;
+          });
+        },
+        onDone: (data) => {
+          setMessages((prev) => {
+            const updated = [...prev];
+            const msg = updated[placeholderIdx];
+            if (msg) {
+              updated[placeholderIdx] = {
+                ...msg,
+                streaming: false,
+                model: data.model,
+                duration_ms: data.duration_ms,
+              };
+            }
+            return updated;
+          });
+        },
+        onError: (errMsg) => {
+          streamFailed = true;
+          setError(errMsg);
+        },
+      });
+    } catch {
+      streamFailed = true;
+    }
+
+    // Refresh sidebar after stream completes — the server persists messages
+    // after the done SSE event, so we must wait for the full response to end.
+    if (!streamFailed) {
+      setSidebarRefreshKey((k) => k + 1);
+    }
+
+    if (streamFailed) {
+      // Remove the streaming placeholder
+      setMessages((prev) => prev.filter((_, i) => i !== placeholderIdx));
+
+      // Fall back to non-streaming
+      try {
+        const data = await queryDocuments(question, topK, history, selectedModel || null, chatId);
+        const assistantMsg = {
+          role: 'assistant',
+          content: data.answer,
+          sources: data.sources,
+          model: data.model,
+          duration_ms: data.duration_ms,
+        };
+        setMessages((prev) => [...prev, assistantMsg]);
+        setSidebarRefreshKey((k) => k + 1);
+      } catch (err) {
+        setError(err.message);
+      }
+    }
+
+    clearInterval(timerRef.current);
+    setLoading(false);
+  }, [input, messages, topK, selectedModel, activeChatId]);
 
   function handleKeyDown(e) {
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
@@ -80,15 +175,48 @@ export default function QueryPanel() {
   }
 
   function handleNewChat() {
+    abortRef.current?.abort();
     setMessages([]);
     setError('');
     setInput('');
+    setActiveChatId(null);
+    setSidebarRefreshKey((k) => k + 1);
+  }
+
+  async function handleSelectChat(chatId) {
+    if (chatId === activeChatId) return;
+    abortRef.current?.abort();
+    setError('');
+    setInput('');
+    setActiveChatId(chatId);
+    try {
+      const data = await getChat(chatId);
+      setMessages(
+        data.messages.map((m) => ({
+          role: m.role,
+          content: m.content,
+          sources: m.sources || undefined,
+          model: m.model || undefined,
+          duration_ms: m.duration_ms || undefined,
+        }))
+      );
+    } catch {
+      setError('Failed to load chat');
+    }
   }
 
   const hasMessages = messages.length > 0;
+  const isStreaming = messages.some((m) => m.streaming);
 
   return (
-    <div className="query-panel">
+    <div className="query-panel-with-sidebar">
+      <ChatSidebar
+        activeChatId={activeChatId}
+        onSelectChat={handleSelectChat}
+        onNewChat={handleNewChat}
+        refreshKey={sidebarRefreshKey}
+      />
+      <div className="query-panel">
       <div className="chat-thread">
         {!hasMessages && !loading && (
           <div className="chat-empty">
@@ -100,7 +228,7 @@ export default function QueryPanel() {
           <ChatMessage key={i} message={msg} />
         ))}
 
-        {loading && (
+        {loading && !isStreaming && (
           <div className="thinking">Thinking... {elapsed}s</div>
         )}
 
@@ -174,6 +302,7 @@ export default function QueryPanel() {
             </>
           )}
         </div>
+      </div>
       </div>
     </div>
   );

@@ -66,16 +66,66 @@ def mock_embedding_service():
     """AsyncMock of EmbeddingService — returns deterministic vectors."""
     svc = AsyncMock()
 
-    async def _embed(texts):
+    async def _embed(texts, prefix=""):
         return [FAKE_VECTOR] * len(texts)
 
-    async def _embed_single(text):
+    async def _embed_single(text, prefix=""):
         return FAKE_VECTOR
 
     svc.embed = AsyncMock(side_effect=_embed)
     svc.embed_single = AsyncMock(side_effect=_embed_single)
     svc.ensure_model = AsyncMock()
     svc.close = AsyncMock()
+    return svc
+
+
+@pytest.fixture
+def mock_chat_service():
+    """AsyncMock of ChatService with all methods stubbed."""
+    svc = AsyncMock()
+    svc.init_index = AsyncMock()
+    svc.create_chat = AsyncMock(return_value={
+        "chat_id": "chat-abc",
+        "title": "New Chat",
+        "messages": [],
+        "message_count": 0,
+        "created_at": "2026-01-01T00:00:00+00:00",
+        "updated_at": "2026-01-01T00:00:00+00:00",
+    })
+    svc.get_chat = AsyncMock(return_value={
+        "chat_id": "chat-abc",
+        "title": "Test Chat",
+        "messages": [
+            {"role": "user", "content": "Hello", "timestamp": "2026-01-01T00:00:00+00:00"},
+            {"role": "assistant", "content": "Hi there", "timestamp": "2026-01-01T00:00:01+00:00", "model": "llama3.2", "duration_ms": 100.0, "sources": []},
+        ],
+        "message_count": 2,
+        "created_at": "2026-01-01T00:00:00+00:00",
+        "updated_at": "2026-01-01T00:00:01+00:00",
+    })
+    svc.list_chats = AsyncMock(return_value=[
+        {
+            "chat_id": "chat-abc",
+            "title": "Test Chat",
+            "message_count": 2,
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "updated_at": "2026-01-01T00:00:01+00:00",
+        }
+    ])
+    svc.append_messages = AsyncMock(return_value={
+        "chat_id": "chat-abc",
+        "title": "Test Chat",
+        "messages": [],
+        "message_count": 4,
+        "created_at": "2026-01-01T00:00:00+00:00",
+        "updated_at": "2026-01-01T00:00:02+00:00",
+    })
+    svc.rename_chat = AsyncMock(return_value={
+        "chat_id": "chat-abc",
+        "title": "Renamed",
+        "updated_at": "2026-01-01T00:00:03+00:00",
+    })
+    svc.delete_chat = AsyncMock(return_value=True)
     return svc
 
 
@@ -97,7 +147,7 @@ def fake_query_rag_result():
 
 
 @pytest.fixture
-async def app_client(mock_es_service, mock_embedding_service):
+async def app_client(mock_es_service, mock_embedding_service, mock_chat_service):
     """httpx.AsyncClient bound to the FastAPI app with patched services."""
     with (
         patch("app.services.elasticsearch.es_service", mock_es_service),
@@ -106,8 +156,12 @@ async def app_client(mock_es_service, mock_embedding_service):
         patch("app.api.routes.ingest.embedding_service", mock_embedding_service),
         patch("app.api.routes.documents.es_service", mock_es_service),
         patch("app.services.similarity.es_service", mock_es_service),
+        patch("app.services.chat.chat_service", mock_chat_service),
+        patch("app.api.routes.chats.chat_service", mock_chat_service),
+        patch("app.api.routes.query.chat_service", mock_chat_service),
         patch("app.api.routes.documents.compute_document_similarity", new_callable=AsyncMock) as mock_sim,
         patch("app.api.routes.query.query_rag", new_callable=AsyncMock) as mock_rag,
+        patch("app.api.routes.query.query_rag_stream") as mock_rag_stream,
         patch("app.api.routes.query.HttpxClient") as mock_httpx_cls,
     ):
         # Mock Ollama /api/tags response
@@ -146,6 +200,17 @@ async def app_client(mock_es_service, mock_embedding_service):
             "duration_ms": 123.4,
         }
 
+        async def _fake_stream(**kwargs):
+            yield {
+                "type": "sources",
+                "data": {"sources": [{"content": "chunk text 1", "score": 0.95, "metadata": {"filename": "test.txt"}}]},
+            }
+            yield {"type": "token", "data": {"token": "The"}}
+            yield {"type": "token", "data": {"token": " answer"}}
+            yield {"type": "done", "data": {"model": "llama3.2", "duration_ms": 123.4}}
+
+        mock_rag_stream.side_effect = lambda **kwargs: _fake_stream(**kwargs)
+
         from app.main import app
 
         # Override lifespan to be a no-op
@@ -160,10 +225,12 @@ async def app_client(mock_es_service, mock_embedding_service):
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             client._mock_rag = mock_rag
+            client._mock_rag_stream = mock_rag_stream
             client._mock_es = mock_es_service
             client._mock_embed = mock_embedding_service
             client._mock_sim = mock_sim
             client._mock_httpx = mock_httpx_instance
+            client._mock_chat = mock_chat_service
             yield client
 
 

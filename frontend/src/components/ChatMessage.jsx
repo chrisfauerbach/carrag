@@ -11,7 +11,10 @@ export default function ChatMessage({ message }) {
         {isUser ? (
           <p className="user-text">{message.content}</p>
         ) : (
-          <MarkdownContent content={message.content} />
+          <>
+            <MarkdownContent content={message.content} />
+            {message.streaming && <span className="streaming-cursor" />}
+          </>
         )}
       </div>
 

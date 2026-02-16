@@ -65,11 +65,15 @@ async def _ingest_content(document_id: str, content: str, metadata: dict) -> Ing
     logger.info(f"Document {document_id}: {len(chunks)} chunks created")
 
     # Embed in batches of 32
+    # Use 'search_document:' prefix (required by nomic-embed-text) and
+    # prepend source filename so the embedding captures document context.
+    source_label = metadata.get("filename", "unknown")
+    doc_prefix = f"search_document: {source_label}\n\n"
     all_embeddings = []
     batch_size = 32
     for i in range(0, len(chunks), batch_size):
         batch_texts = [c["text"] for c in chunks[i:i + batch_size]]
-        batch_embeddings = await embedding_service.embed(batch_texts)
+        batch_embeddings = await embedding_service.embed(batch_texts, prefix=doc_prefix)
         all_embeddings.extend(batch_embeddings)
 
     # Store in Elasticsearch

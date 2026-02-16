@@ -1,5 +1,7 @@
+import json
 import logging
 import time
+from typing import AsyncGenerator
 
 import httpx
 
@@ -14,13 +16,17 @@ Use ONLY the context below to answer the question. If the context doesn't contai
 Always cite which source(s) you used in your answer."""
 
 
-async def query_rag(question: str, top_k: int = 5, model: str | None = None, history: list | None = None) -> dict:
-    """Full RAG pipeline: embed question -> retrieve chunks -> generate answer."""
-    start = time.time()
+async def _prepare_rag_context(
+    question: str, top_k: int = 5, model: str | None = None, history: list | None = None
+) -> tuple[str, str, list[dict], str]:
+    """Shared retrieval logic: embed -> kNN -> build prompt.
+
+    Returns (prompt, system_prompt, sources, llm_model).
+    """
     llm_model = model or settings.llm_model
 
-    # 1. Embed the question
-    query_vector = await embedding_service.embed_single(question)
+    # 1. Embed the question (search_query prefix required by nomic-embed-text)
+    query_vector = await embedding_service.embed_single(question, prefix="search_query: ")
 
     # 2. Retrieve similar chunks
     chunks = await es_service.knn_search(query_vector, top_k=top_k)
@@ -50,14 +56,34 @@ Question: {question}
 
 Answer based on the context above:"""
 
-    # 5. Generate answer via Ollama
+    sources = [
+        {
+            "content": c["content"],
+            "score": c["score"],
+            "metadata": c["metadata"],
+        }
+        for c in chunks
+    ]
+
+    return prompt, SYSTEM_PROMPT, sources, llm_model
+
+
+async def query_rag(question: str, top_k: int = 5, model: str | None = None, history: list | None = None) -> dict:
+    """Full RAG pipeline: embed question -> retrieve chunks -> generate answer."""
+    start = time.time()
+
+    prompt, system_prompt, sources, llm_model = await _prepare_rag_context(
+        question, top_k=top_k, model=model, history=history
+    )
+
+    # Generate answer via Ollama
     async with httpx.AsyncClient(base_url=settings.ollama_url, timeout=300) as client:
         resp = await client.post(
             "/api/generate",
             json={
                 "model": llm_model,
                 "prompt": prompt,
-                "system": SYSTEM_PROMPT,
+                "system": system_prompt,
                 "stream": False,
             },
         )
@@ -68,14 +94,55 @@ Answer based on the context above:"""
 
     return {
         "answer": result.get("response", ""),
-        "sources": [
-            {
-                "content": c["content"],
-                "score": c["score"],
-                "metadata": c["metadata"],
-            }
-            for c in chunks
-        ],
+        "sources": sources,
         "model": llm_model,
         "duration_ms": round(duration_ms, 1),
     }
+
+
+async def query_rag_stream(
+    question: str, top_k: int = 5, model: str | None = None, history: list | None = None
+) -> AsyncGenerator[dict, None]:
+    """Streaming RAG pipeline: yields SSE-style event dicts.
+
+    Events: {type: "sources", data: ...}, {type: "token", data: ...}, {type: "done", data: ...}
+    """
+    start = time.time()
+
+    prompt, system_prompt, sources, llm_model = await _prepare_rag_context(
+        question, top_k=top_k, model=model, history=history
+    )
+
+    # Yield sources immediately (retrieval is done)
+    yield {"type": "sources", "data": {"sources": sources}}
+
+    # Stream generation from Ollama
+    async with httpx.AsyncClient(base_url=settings.ollama_url, timeout=300) as client:
+        async with client.stream(
+            "POST",
+            "/api/generate",
+            json={
+                "model": llm_model,
+                "prompt": prompt,
+                "system": system_prompt,
+                "stream": True,
+            },
+        ) as resp:
+            resp.raise_for_status()
+            async for line in resp.aiter_lines():
+                if not line.strip():
+                    continue
+                chunk = json.loads(line)
+                if chunk.get("done"):
+                    duration_ms = (time.time() - start) * 1000
+                    yield {
+                        "type": "done",
+                        "data": {
+                            "model": llm_model,
+                            "duration_ms": round(duration_ms, 1),
+                        },
+                    }
+                    break
+                token = chunk.get("response", "")
+                if token:
+                    yield {"type": "token", "data": {"token": token}}

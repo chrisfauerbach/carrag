@@ -36,6 +36,7 @@ class QueryRequest(BaseModel):
     model: str | None = None
     return_sources: bool = True
     history: list[ChatMessage] = []
+    chat_id: str | None = None
 
 
 class SourceChunk(BaseModel):
@@ -115,3 +116,62 @@ class SimilarityResponse(BaseModel):
     nodes: list[SimilarityNode]
     edges: list[SimilarityEdge]
     threshold: float
+
+
+# --- Chat Sessions ---
+
+class ChatMessageStored(BaseModel):
+    role: str
+    content: str
+    timestamp: str | None = None
+    model: str | None = None
+    duration_ms: float | None = None
+    sources: list[SourceChunk] | None = None
+
+
+class CreateChatRequest(BaseModel):
+    title: str | None = None
+
+
+class CreateChatResponse(BaseModel):
+    chat_id: str
+    title: str
+    created_at: str
+    updated_at: str
+
+
+class ChatSessionInfo(BaseModel):
+    chat_id: str
+    title: str
+    message_count: int
+    created_at: str
+    updated_at: str
+
+
+class ChatListResponse(BaseModel):
+    chats: list[ChatSessionInfo]
+    total: int
+
+
+class ChatDetailResponse(BaseModel):
+    chat_id: str
+    title: str
+    messages: list[ChatMessageStored]
+    message_count: int
+    created_at: str
+    updated_at: str
+
+
+class RenameChatRequest(BaseModel):
+    title: str
+
+
+class RenameChatResponse(BaseModel):
+    chat_id: str
+    title: str
+    updated_at: str
+
+
+class ChatDeleteResponse(BaseModel):
+    chat_id: str
+    status: str = "deleted"

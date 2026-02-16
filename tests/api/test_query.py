@@ -1,5 +1,6 @@
 """Tests for query endpoints."""
 
+import json
 import pytest
 from unittest.mock import AsyncMock
 
@@ -93,3 +94,76 @@ class TestQuery:
         assert resp.status_code == 200
         call_kwargs = app_client._mock_rag.call_args[1]
         assert call_kwargs["model"] == "custom-model"
+
+
+class TestQueryStream:
+    async def test_returns_event_stream_content_type(self, app_client):
+        resp = await app_client.post(
+            "/query/stream", json={"question": "What is X?"}
+        )
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("text/event-stream")
+
+    async def test_sse_body_contains_expected_events(self, app_client):
+        resp = await app_client.post(
+            "/query/stream", json={"question": "What is X?"}
+        )
+        body = resp.text
+
+        assert "event: sources" in body
+        assert "event: token" in body
+        assert "event: done" in body
+
+    async def test_sources_event_has_sources(self, app_client):
+        resp = await app_client.post(
+            "/query/stream", json={"question": "What is X?"}
+        )
+        body = resp.text
+
+        # Parse the sources event
+        for block in body.strip().split("\n\n"):
+            lines = block.strip().split("\n")
+            if len(lines) >= 2 and lines[0] == "event: sources":
+                data = json.loads(lines[1].removeprefix("data: "))
+                assert "sources" in data
+                assert len(data["sources"]) > 0
+                break
+        else:
+            pytest.fail("No sources event found")
+
+    async def test_done_event_has_model_and_duration(self, app_client):
+        resp = await app_client.post(
+            "/query/stream", json={"question": "What is X?"}
+        )
+        body = resp.text
+
+        for block in body.strip().split("\n\n"):
+            lines = block.strip().split("\n")
+            if len(lines) >= 2 and lines[0] == "event: done":
+                data = json.loads(lines[1].removeprefix("data: "))
+                assert data["model"] == "llama3.2"
+                assert "duration_ms" in data
+                break
+        else:
+            pytest.fail("No done event found")
+
+    async def test_no_buffering_header(self, app_client):
+        resp = await app_client.post(
+            "/query/stream", json={"question": "What is X?"}
+        )
+        assert resp.headers.get("x-accel-buffering") == "no"
+
+    async def test_error_event_on_failure(self, app_client):
+        async def _failing_stream(**kwargs):
+            raise RuntimeError("boom")
+            yield  # make it a generator  # noqa: E501
+
+        app_client._mock_rag_stream.side_effect = _failing_stream
+
+        resp = await app_client.post(
+            "/query/stream", json={"question": "What is X?"}
+        )
+        assert resp.status_code == 200
+        body = resp.text
+        assert "event: error" in body
+        assert "boom" in body

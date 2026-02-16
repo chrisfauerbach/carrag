@@ -6,7 +6,8 @@ from fastapi import FastAPI
 from app.config import settings
 from app.services.elasticsearch import es_service
 from app.services.embeddings import embedding_service
-from app.api.routes import ingest, query, documents
+from app.api.routes import ingest, query, documents, chats
+from app.services.chat import chat_service
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +18,7 @@ async def lifespan(app: FastAPI):
     logger.info("Starting up — initializing services...")
 
     await es_service.init()
+    await chat_service.init_index()
     await embedding_service.ensure_model()
 
     # Pull LLM model too
@@ -60,6 +62,7 @@ app.add_middleware(
 app.include_router(ingest.router, prefix="/ingest", tags=["ingest"])
 app.include_router(query.router, tags=["query"])
 app.include_router(documents.router, prefix="/documents", tags=["documents"])
+app.include_router(chats.router, prefix="/chats", tags=["chats"])
 
 
 @app.get("/health")

@@ -34,22 +34,25 @@ class EmbeddingService:
         else:
             logger.info(f"Embedding model {model} already available.")
 
-    async def embed(self, texts: list[str]) -> list[list[float]]:
+    async def embed(self, texts: list[str], prefix: str = "") -> list[list[float]]:
         """Generate embeddings for a list of texts.
 
         Uses the Ollama /api/embed endpoint with batch support.
+        The prefix param supports nomic-embed-text task prefixes
+        ('search_document: ' for indexing, 'search_query: ' for queries).
         Returns a list of embedding vectors.
         """
+        prefixed = [prefix + t for t in texts] if prefix else texts
         resp = await self.client.post(
             "/api/embed",
-            json={"model": settings.embedding_model, "input": texts},
+            json={"model": settings.embedding_model, "input": prefixed},
         )
         resp.raise_for_status()
         return resp.json()["embeddings"]
 
-    async def embed_single(self, text: str) -> list[float]:
+    async def embed_single(self, text: str, prefix: str = "") -> list[float]:
         """Generate an embedding for a single text."""
-        embeddings = await self.embed([text])
+        embeddings = await self.embed([text], prefix=prefix)
         return embeddings[0]
 
     async def close(self):
