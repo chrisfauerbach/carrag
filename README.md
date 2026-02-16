@@ -31,7 +31,7 @@ Documents are parsed, split into overlapping chunks, embedded as 768-dimensional
 ### Run
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/carrag.git
+git clone https://github.com/chrisfauerbach/carrag.git
 cd carrag
 cp .env.example .env    # optional — defaults work out of the box
 docker compose up --build -d
@@ -53,9 +53,9 @@ Data persists in Docker volumes (`es_data`, `ollama_models`) across restarts.
 
 ### Web UI (port 3000)
 
-- **Query tab** — Ask questions about your ingested documents. Shows the answer, model info, response time, and source citations with similarity scores.
+- **Query tab** — Chat-style interface for asking questions about your ingested documents. Supports multi-turn conversation history, renders answers in Markdown, and shows source citations with similarity scores, model info, and response time.
 - **Upload tab** — Drag-and-drop files (PDF, TXT, MD) or paste a URL to ingest web pages.
-- **Documents tab** — View and delete ingested documents.
+- **Documents tab** — View and delete ingested documents. Click any document row to browse its stored chunks with full text content, chunk indices, and character ranges.
 
 ### API (port 8000)
 
@@ -75,6 +75,9 @@ curl -X POST http://localhost:8000/query \
 
 # List documents
 curl http://localhost:8000/documents
+
+# View a document's chunks
+curl http://localhost:8000/documents/{document_id}/chunks
 
 # Delete a document
 curl -X DELETE http://localhost:8000/documents/{document_id}
@@ -147,6 +150,14 @@ The backend runs inside Docker. View logs with:
 ```bash
 docker compose logs -f app
 ```
+
+### Tests
+
+```bash
+python3 -m pytest -v
+```
+
+The test suite covers all API endpoints, services (Elasticsearch, embeddings, RAG), parsers (PDF, text, web), the chunker, and Pydantic schemas. Tests use mocked Elasticsearch and Ollama clients — no running services required.
 
 ## License
 
