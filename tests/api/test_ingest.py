@@ -89,6 +89,24 @@ class TestIngestFile:
         )
         assert resp.status_code == 400
 
+    async def test_tags_passed_as_form_field(self, app_client):
+        resp = await app_client.post(
+            "/ingest/file",
+            files={"file": ("test.txt", b"Hello world content", "text/plain")},
+            data={"tags": "research, ml"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["tags"] == ["research", "ml"]
+
+    async def test_empty_tags_default(self, app_client):
+        resp = await app_client.post(
+            "/ingest/file",
+            files={"file": ("test.txt", b"Hello world content", "text/plain")},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["tags"] == []
+
 
 class TestIngestUrl:
     async def test_valid_url(self, app_client):
@@ -153,6 +171,36 @@ class TestIngestUrl:
             resp = await app_client.post("/ingest/url", json={"url": "https://example.com"})
 
         assert resp.status_code == 200
+
+    async def test_tags_in_json_body(self, app_client):
+        with patch(
+            "app.api.routes.ingest.parse_url",
+            new_callable=AsyncMock,
+            return_value={
+                "content": "Web page content here.",
+                "metadata": {"filename": "https://example.com", "source_type": "web"},
+            },
+        ):
+            resp = await app_client.post(
+                "/ingest/url", json={"url": "https://example.com", "tags": ["research", "ml"]}
+            )
+
+        assert resp.status_code == 200
+        assert resp.json()["tags"] == ["research", "ml"]
+
+    async def test_default_empty_tags_url(self, app_client):
+        with patch(
+            "app.api.routes.ingest.parse_url",
+            new_callable=AsyncMock,
+            return_value={
+                "content": "Web page content here.",
+                "metadata": {"filename": "https://example.com", "source_type": "web"},
+            },
+        ):
+            resp = await app_client.post("/ingest/url", json={"url": "https://example.com"})
+
+        assert resp.status_code == 200
+        assert resp.json()["tags"] == []
 
     async def test_response_shape(self, app_client):
         with patch(

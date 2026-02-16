@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { listDocuments, deleteDocument } from '../api';
+import { listDocuments, deleteDocument, updateDocumentTags } from '../api';
 import StatusMessage from './StatusMessage';
 import DocumentDetail from './DocumentDetail';
 import './DocumentList.css';
@@ -10,6 +10,8 @@ export default function DocumentList() {
   const [error, setError] = useState('');
   const [filter, setFilter] = useState('');
   const [selectedDoc, setSelectedDoc] = useState(null);
+  const [editingTagsId, setEditingTagsId] = useState(null);
+  const [editingTagsValue, setEditingTagsValue] = useState('');
 
   async function fetchDocs() {
     setLoading(true);
@@ -37,6 +39,31 @@ export default function DocumentList() {
     }
   }
 
+  function handleStartEditTags(e, doc) {
+    e.stopPropagation();
+    setEditingTagsId(doc.document_id);
+    setEditingTagsValue((doc.tags || []).join(', '));
+  }
+
+  async function handleSaveTags(e, docId) {
+    e.stopPropagation();
+    const newTags = editingTagsValue.split(',').map((t) => t.trim()).filter(Boolean);
+    try {
+      await updateDocumentTags(docId, newTags);
+      setDocs((prev) =>
+        prev.map((d) => (d.document_id === docId ? { ...d, tags: newTags } : d))
+      );
+    } catch (err) {
+      setError(err.message);
+    }
+    setEditingTagsId(null);
+  }
+
+  function handleCancelEditTags(e) {
+    e.stopPropagation();
+    setEditingTagsId(null);
+  }
+
   function formatDate(dateStr) {
     if (!dateStr) return '-';
     return new Date(dateStr).toLocaleDateString();
@@ -56,7 +83,8 @@ export default function DocumentList() {
     ? docs.filter(
         (d) =>
           d.filename.toLowerCase().includes(needle) ||
-          d.source_type.toLowerCase().includes(needle)
+          d.source_type.toLowerCase().includes(needle) ||
+          (d.tags || []).some((t) => t.toLowerCase().includes(needle))
       )
     : docs;
 
@@ -115,6 +143,7 @@ export default function DocumentList() {
             <tr>
               <th>Filename</th>
               <th>Type</th>
+              <th>Tags</th>
               <th>Chunks</th>
               <th>Created</th>
               <th></th>
@@ -129,6 +158,32 @@ export default function DocumentList() {
               >
                 <td>{doc.filename}</td>
                 <td>{doc.source_type}</td>
+                <td onClick={(e) => e.stopPropagation()}>
+                  {editingTagsId === doc.document_id ? (
+                    <div className="tag-edit">
+                      <input
+                        type="text"
+                        value={editingTagsValue}
+                        onChange={(e) => setEditingTagsValue(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') handleSaveTags(e, doc.document_id);
+                          if (e.key === 'Escape') handleCancelEditTags(e);
+                        }}
+                        autoFocus
+                      />
+                      <button onClick={(e) => handleSaveTags(e, doc.document_id)}>Save</button>
+                      <button onClick={handleCancelEditTags}>Cancel</button>
+                    </div>
+                  ) : (
+                    <div className="tag-display" onClick={(e) => handleStartEditTags(e, doc)}>
+                      {(doc.tags || []).length > 0
+                        ? doc.tags.map((t) => (
+                            <span key={t} className="tag-badge">{t}</span>
+                          ))
+                        : <span className="no-tags">click to add</span>}
+                    </div>
+                  )}
+                </td>
                 <td>{doc.chunk_count}</td>
                 <td>{formatDate(doc.created_at)}</td>
                 <td>

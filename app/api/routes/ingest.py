@@ -1,7 +1,7 @@
 import uuid
 import logging
 
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 
 from app.models.schemas import IngestURLRequest, IngestResponse
 from app.services.parsers.pdf import parse_pdf
@@ -18,7 +18,7 @@ ALLOWED_EXTENSIONS = {".pdf", ".txt", ".md", ".text", ".markdown"}
 
 
 @router.post("/file", response_model=IngestResponse)
-async def ingest_file(file: UploadFile = File(...)):
+async def ingest_file(file: UploadFile = File(...), tags: str = Form("")):
     """Upload and ingest a PDF or text file."""
     filename = file.filename or "unknown"
     ext = _get_extension(filename)
@@ -40,8 +40,9 @@ async def ingest_file(file: UploadFile = File(...)):
         raise HTTPException(400, "No text content could be extracted from the file")
 
     # Chunk, embed, store
+    parsed_tags = [t.strip() for t in tags.split(",") if t.strip()]
     document_id = str(uuid.uuid4())
-    return await _ingest_content(document_id, parsed["content"], parsed["metadata"])
+    return await _ingest_content(document_id, parsed["content"], parsed["metadata"], tags=parsed_tags)
 
 
 @router.post("/url", response_model=IngestResponse)
@@ -56,11 +57,14 @@ async def ingest_url(request: IngestURLRequest):
         raise HTTPException(400, "No text content could be extracted from the URL")
 
     document_id = str(uuid.uuid4())
-    return await _ingest_content(document_id, parsed["content"], parsed["metadata"])
+    return await _ingest_content(document_id, parsed["content"], parsed["metadata"], tags=request.tags)
 
 
-async def _ingest_content(document_id: str, content: str, metadata: dict) -> IngestResponse:
+async def _ingest_content(document_id: str, content: str, metadata: dict, tags: list[str] | None = None) -> IngestResponse:
     """Shared logic: chunk -> embed -> index."""
+    resolved_tags = tags or []
+    metadata["tags"] = resolved_tags
+
     chunks = chunk_text(content, document_id)
     logger.info(f"Document {document_id}: {len(chunks)} chunks created")
 
@@ -77,13 +81,14 @@ async def _ingest_content(document_id: str, content: str, metadata: dict) -> Ing
         all_embeddings.extend(batch_embeddings)
 
     # Store in Elasticsearch
-    indexed = await es_service.index_chunks(chunks, all_embeddings, metadata)
+    indexed = await es_service.index_chunks(chunks, all_embeddings, metadata, tags=resolved_tags)
     logger.info(f"Document {document_id}: {indexed} chunks indexed")
 
     return IngestResponse(
         document_id=document_id,
         filename=metadata.get("filename", "unknown"),
         chunk_count=len(chunks),
+        tags=resolved_tags,
     )
 
 

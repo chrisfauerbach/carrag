@@ -11,6 +11,7 @@ export default function QueryPanel() {
   const [topK, setTopK] = useState(5);
   const [models, setModels] = useState([]);
   const [selectedModel, setSelectedModel] = useState('');
+  const [filterTags, setFilterTags] = useState('');
   const [showTopK, setShowTopK] = useState(false);
   const [loading, setLoading] = useState(false);
   const [elapsed, setElapsed] = useState(0);
@@ -84,6 +85,7 @@ export default function QueryPanel() {
       { role: 'assistant', content: '', streaming: true },
     ]);
 
+    const parsedTags = filterTags.split(',').map((t) => t.trim()).filter(Boolean);
     let streamFailed = false;
 
     try {
@@ -92,6 +94,7 @@ export default function QueryPanel() {
         history,
         model: selectedModel || null,
         chatId,
+        tags: parsedTags,
         signal: abortController.signal,
         onToken: (token) => {
           setMessages((prev) => {
@@ -149,7 +152,7 @@ export default function QueryPanel() {
 
       // Fall back to non-streaming
       try {
-        const data = await queryDocuments(question, topK, history, selectedModel || null, chatId);
+        const data = await queryDocuments(question, topK, history, selectedModel || null, chatId, parsedTags);
         const assistantMsg = {
           role: 'assistant',
           content: data.answer,
@@ -166,7 +169,7 @@ export default function QueryPanel() {
 
     clearInterval(timerRef.current);
     setLoading(false);
-  }, [input, messages, topK, selectedModel, activeChatId]);
+  }, [input, messages, topK, selectedModel, activeChatId, filterTags]);
 
   function handleKeyDown(e) {
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
@@ -299,6 +302,15 @@ export default function QueryPanel() {
                   </select>
                 </div>
               )}
+              <div className="tags-filter-control">
+                <label>Tags:</label>
+                <input
+                  type="text"
+                  value={filterTags}
+                  onChange={(e) => setFilterTags(e.target.value)}
+                  placeholder="e.g. research, ml"
+                />
+              </div>
             </>
           )}
         </div>

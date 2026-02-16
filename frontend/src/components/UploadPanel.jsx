@@ -5,6 +5,7 @@ import './UploadPanel.css';
 
 export default function UploadPanel() {
   const [url, setUrl] = useState('');
+  const [tags, setTags] = useState('');
   const [dragover, setDragover] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [results, setResults] = useState([]);
@@ -15,12 +16,17 @@ export default function UploadPanel() {
     setResults((prev) => [entry, ...prev]);
   }
 
+  function parseTags() {
+    return tags.split(',').map((t) => t.trim()).filter(Boolean);
+  }
+
   async function handleFiles(files) {
     setUploading(true);
     setError('');
+    const parsed = parseTags();
     for (const file of files) {
       try {
-        const data = await uploadFile(file);
+        const data = await uploadFile(file, parsed);
         addResult({
           name: data.filename,
           chunks: data.chunk_count,
@@ -64,7 +70,7 @@ export default function UploadPanel() {
     setUploading(true);
     setError('');
     try {
-      const data = await ingestUrl(url.trim());
+      const data = await ingestUrl(url.trim(), parseTags());
       addResult({
         name: data.filename,
         chunks: data.chunk_count,
@@ -118,6 +124,16 @@ export default function UploadPanel() {
           multiple
           hidden
           onChange={handleFileInput}
+        />
+      </div>
+
+      <div className="tags-section">
+        <input
+          type="text"
+          value={tags}
+          onChange={(e) => setTags(e.target.value)}
+          placeholder="Tags (comma-separated, e.g. research, ml)"
+          disabled={uploading}
         />
       </div>
 

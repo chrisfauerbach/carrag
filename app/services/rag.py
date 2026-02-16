@@ -17,7 +17,7 @@ Always cite which source(s) you used in your answer."""
 
 
 async def _prepare_rag_context(
-    question: str, top_k: int = 5, model: str | None = None, history: list | None = None
+    question: str, top_k: int = 5, model: str | None = None, history: list | None = None, tags: list[str] | None = None
 ) -> tuple[str, str, list[dict], str]:
     """Shared retrieval logic: embed -> kNN -> build prompt.
 
@@ -29,7 +29,7 @@ async def _prepare_rag_context(
     query_vector = await embedding_service.embed_single(question, prefix="search_query: ")
 
     # 2. Retrieve similar chunks
-    chunks = await es_service.hybrid_search(query_vector, question, top_k=top_k)
+    chunks = await es_service.hybrid_search(query_vector, question, top_k=top_k, tags=tags or None)
 
     # 3. Build context from retrieved chunks
     context_parts = []
@@ -68,12 +68,14 @@ Answer based on the context above:"""
     return prompt, SYSTEM_PROMPT, sources, llm_model
 
 
-async def query_rag(question: str, top_k: int = 5, model: str | None = None, history: list | None = None) -> dict:
+async def query_rag(
+    question: str, top_k: int = 5, model: str | None = None, history: list | None = None, tags: list[str] | None = None
+) -> dict:
     """Full RAG pipeline: embed question -> retrieve chunks -> generate answer."""
     start = time.time()
 
     prompt, system_prompt, sources, llm_model = await _prepare_rag_context(
-        question, top_k=top_k, model=model, history=history
+        question, top_k=top_k, model=model, history=history, tags=tags
     )
 
     # Generate answer via Ollama
@@ -101,7 +103,7 @@ async def query_rag(question: str, top_k: int = 5, model: str | None = None, his
 
 
 async def query_rag_stream(
-    question: str, top_k: int = 5, model: str | None = None, history: list | None = None
+    question: str, top_k: int = 5, model: str | None = None, history: list | None = None, tags: list[str] | None = None
 ) -> AsyncGenerator[dict, None]:
     """Streaming RAG pipeline: yields SSE-style event dicts.
 
@@ -110,7 +112,7 @@ async def query_rag_stream(
     start = time.time()
 
     prompt, system_prompt, sources, llm_model = await _prepare_rag_context(
-        question, top_k=top_k, model=model, history=history
+        question, top_k=top_k, model=model, history=history, tags=tags
     )
 
     # Yield sources immediately (retrieval is done)

@@ -44,6 +44,21 @@
   color: var(--color-text-secondary);
 }
 
+.tags-section input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  font-size: 0.9rem;
+  box-sizing: border-box;
+}
+
+.tags-section input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+}
+
 .url-section {
   display: flex;
   gap: 8px;

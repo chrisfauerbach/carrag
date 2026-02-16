@@ -10,6 +10,8 @@ from app.models.schemas import (
     SimilarityResponse,
     SimilarityNode,
     SimilarityEdge,
+    UpdateTagsRequest,
+    UpdateTagsResponse,
 )
 from app.services.elasticsearch import es_service
 from app.services.similarity import compute_document_similarity
@@ -37,6 +39,21 @@ async def document_similarity(
         nodes=[SimilarityNode(**n) for n in result["nodes"]],
         edges=[SimilarityEdge(**e) for e in result["edges"]],
         threshold=result["threshold"],
+    )
+
+
+@router.patch("/{document_id}/tags", response_model=UpdateTagsResponse)
+async def update_document_tags(document_id: str, request: UpdateTagsRequest):
+    """Update tags for a document."""
+    doc = await es_service.get_document(document_id)
+    if doc is None:
+        raise HTTPException(404, "Document not found")
+
+    updated = await es_service.update_document_tags(document_id, request.tags)
+    return UpdateTagsResponse(
+        document_id=document_id,
+        tags=request.tags,
+        chunks_updated=updated,
     )
 
 

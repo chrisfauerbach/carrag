@@ -14,6 +14,8 @@ from app.models.schemas import (
     DocumentListResponse,
     DocumentDetailResponse,
     DocumentDeleteResponse,
+    UpdateTagsRequest,
+    UpdateTagsResponse,
 )
 
 
@@ -130,6 +132,20 @@ class TestDocumentModels:
         assert resp.created_at is None
 
 
+class TestUpdateTagsRequest:
+    def test_valid(self):
+        req = UpdateTagsRequest(tags=["research", "ml"])
+        assert req.tags == ["research", "ml"]
+
+    def test_empty_tags(self):
+        req = UpdateTagsRequest(tags=[])
+        assert req.tags == []
+
+    def test_missing_tags(self):
+        with pytest.raises(ValidationError):
+            UpdateTagsRequest()
+
+
 class TestIngestURLRequest:
     def test_valid(self):
         req = IngestURLRequest(url="https://example.com")
@@ -138,3 +154,21 @@ class TestIngestURLRequest:
     def test_missing_url(self):
         with pytest.raises(ValidationError):
             IngestURLRequest()
+
+    def test_with_tags(self):
+        req = IngestURLRequest(url="https://example.com", tags=["research"])
+        assert req.tags == ["research"]
+
+    def test_default_empty_tags(self):
+        req = IngestURLRequest(url="https://example.com")
+        assert req.tags == []
+
+
+class TestQueryRequestTags:
+    def test_with_tags(self):
+        req = QueryRequest(question="Q?", tags=["research"])
+        assert req.tags == ["research"]
+
+    def test_default_empty_tags(self):
+        req = QueryRequest(question="Q?")
+        assert req.tags == []

@@ -38,6 +38,7 @@ async def query(request: QueryRequest):
         top_k=request.top_k,
         model=request.model,
         history=request.history,
+        tags=request.tags or None,
     )
 
     response = QueryResponse(
@@ -81,6 +82,7 @@ async def query_stream(request: QueryRequest):
                 top_k=request.top_k,
                 model=request.model,
                 history=request.history,
+                tags=request.tags or None,
             ):
                 event_type = event["type"]
                 data = json.dumps(event["data"])

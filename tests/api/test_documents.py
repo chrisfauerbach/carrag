@@ -129,6 +129,73 @@ class TestDocumentSimilarity:
         assert data["edges"] == []
 
 
+class TestUpdateDocumentTags:
+    async def test_patch_tags_success(self, app_client):
+        resp = await app_client.patch(
+            "/documents/doc-123/tags",
+            json={"tags": ["research", "ml"]},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["document_id"] == "doc-123"
+        assert data["tags"] == ["research", "ml"]
+        assert data["chunks_updated"] == 3
+
+    async def test_patch_tags_not_found(self, app_client):
+        app_client._mock_es.get_document.return_value = None
+        resp = await app_client.patch(
+            "/documents/nonexistent/tags",
+            json={"tags": ["tag"]},
+        )
+        assert resp.status_code == 404
+
+    async def test_patch_tags_empty_list(self, app_client):
+        resp = await app_client.patch(
+            "/documents/doc-123/tags",
+            json={"tags": []},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["tags"] == []
+
+    async def test_patch_tags_calls_es_service(self, app_client):
+        await app_client.patch(
+            "/documents/doc-123/tags",
+            json={"tags": ["updated"]},
+        )
+        app_client._mock_es.update_document_tags.assert_called_with("doc-123", ["updated"])
+
+
+class TestListDocumentTags:
+    async def test_list_includes_tags(self, app_client):
+        app_client._mock_es.list_documents.return_value = [
+            {
+                "document_id": "doc-123",
+                "filename": "test.txt",
+                "source_type": "text",
+                "chunk_count": 3,
+                "tags": ["research"],
+                "created_at": "2026-01-01T00:00:00+00:00",
+            }
+        ]
+        resp = await app_client.get("/documents")
+        assert resp.status_code == 200
+        assert resp.json()["documents"][0]["tags"] == ["research"]
+
+    async def test_get_includes_tags(self, app_client):
+        app_client._mock_es.get_document.return_value = {
+            "document_id": "doc-123",
+            "filename": "test.txt",
+            "source_type": "text",
+            "chunk_count": 3,
+            "tags": ["ml"],
+            "metadata": {"filename": "test.txt", "source_type": "text"},
+            "created_at": "2026-01-01T00:00:00+00:00",
+        }
+        resp = await app_client.get("/documents/doc-123")
+        assert resp.status_code == 200
+        assert resp.json()["tags"] == ["ml"]
+
+
 class TestDeleteDocument:
     async def test_delete_found(self, app_client):
         resp = await app_client.delete("/documents/doc-123")

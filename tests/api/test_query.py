@@ -95,6 +95,22 @@ class TestQuery:
         call_kwargs = app_client._mock_rag.call_args[1]
         assert call_kwargs["model"] == "custom-model"
 
+    async def test_tags_passed_through(self, app_client):
+        resp = await app_client.post(
+            "/query", json={"question": "Q?", "tags": ["research", "ml"]}
+        )
+        assert resp.status_code == 200
+        call_kwargs = app_client._mock_rag.call_args[1]
+        assert call_kwargs["tags"] == ["research", "ml"]
+
+    async def test_empty_tags_passes_none(self, app_client):
+        resp = await app_client.post(
+            "/query", json={"question": "Q?"}
+        )
+        assert resp.status_code == 200
+        call_kwargs = app_client._mock_rag.call_args[1]
+        assert call_kwargs["tags"] is None
+
 
 class TestQueryStream:
     async def test_returns_event_stream_content_type(self, app_client):

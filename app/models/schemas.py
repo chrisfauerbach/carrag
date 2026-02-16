@@ -7,12 +7,14 @@ from pydantic import BaseModel, Field
 
 class IngestURLRequest(BaseModel):
     url: str
+    tags: list[str] = []
 
 
 class IngestResponse(BaseModel):
     document_id: str
     filename: str
     chunk_count: int
+    tags: list[str] = []
     status: str = "ingested"
 
 
@@ -37,6 +39,7 @@ class QueryRequest(BaseModel):
     return_sources: bool = True
     history: list[ChatMessage] = []
     chat_id: str | None = None
+    tags: list[str] = []
 
 
 class SourceChunk(BaseModel):
@@ -59,6 +62,7 @@ class DocumentInfo(BaseModel):
     filename: str
     source_type: str
     chunk_count: int
+    tags: list[str] = []
     created_at: datetime | None = None
 
 
@@ -72,8 +76,19 @@ class DocumentDetailResponse(BaseModel):
     filename: str
     source_type: str
     chunk_count: int
+    tags: list[str] = []
     metadata: dict
     created_at: datetime | None = None
+
+
+class UpdateTagsRequest(BaseModel):
+    tags: list[str]
+
+
+class UpdateTagsResponse(BaseModel):
+    document_id: str
+    tags: list[str]
+    chunks_updated: int
 
 
 class DocumentDeleteResponse(BaseModel):

@@ -27,6 +27,7 @@ INDEX_MAPPING = {
                 "type": "object",
                 "enabled": True,
             },
+            "tags": {"type": "keyword"},
             "created_at": {"type": "date"},
         }
     }
@@ -57,6 +58,7 @@ class ElasticsearchService:
         chunks: list[dict],
         embeddings: list[list[float]],
         metadata: dict,
+        tags: list[str] | None = None,
     ) -> int:
         """Bulk-index chunks with their embeddings.
 
@@ -64,6 +66,7 @@ class ElasticsearchService:
         Returns the number of successfully indexed documents.
         """
         now = datetime.now(timezone.utc).isoformat()
+        resolved_tags = tags or []
 
         def gen_actions():
             for chunk, embedding in zip(chunks, embeddings):
@@ -77,6 +80,7 @@ class ElasticsearchService:
                         "char_start": chunk["char_start"],
                         "char_end": chunk["char_end"],
                         "metadata": metadata,
+                        "tags": resolved_tags,
                         "created_at": now,
                     },
                 }
@@ -85,15 +89,38 @@ class ElasticsearchService:
         await self.client.indices.refresh(index=settings.es_index)
         return success
 
-    async def hybrid_search(self, query_vector: list[float], query_text: str, top_k: int = 5) -> list[dict]:
+    async def hybrid_search(
+        self, query_vector: list[float], query_text: str, top_k: int = 5, tags: list[str] | None = None
+    ) -> list[dict]:
         """Find the top-k most relevant chunks using hybrid BM25 + kNN search with manual RRF."""
         source_fields = ["content", "document_id", "chunk_index", "metadata", "created_at"]
+
+        if tags:
+            bm25_query = {
+                "bool": {
+                    "must": {"match": {"content": {"query": query_text}}},
+                    "filter": [{"terms": {"tags": tags}}],
+                }
+            }
+            knn_filter = {"terms": {"tags": tags}}
+        else:
+            bm25_query = {"match": {"content": {"query": query_text}}}
+            knn_filter = None
+
+        knn_body = {
+            "field": "embedding",
+            "query_vector": query_vector,
+            "k": top_k,
+            "num_candidates": top_k * 10,
+        }
+        if knn_filter:
+            knn_body["filter"] = knn_filter
 
         bm25_resp, knn_resp = await asyncio.gather(
             self.client.search(
                 index=settings.es_index,
                 body={
-                    "query": {"match": {"content": {"query": query_text}}},
+                    "query": bm25_query,
                     "_source": source_fields,
                 },
                 size=top_k,
@@ -101,12 +128,7 @@ class ElasticsearchService:
             self.client.search(
                 index=settings.es_index,
                 body={
-                    "knn": {
-                        "field": "embedding",
-                        "query_vector": query_vector,
-                        "k": top_k,
-                        "num_candidates": top_k * 10,
-                    },
+                    "knn": knn_body,
                     "_source": source_fields,
                 },
                 size=top_k,
@@ -144,6 +166,22 @@ class ElasticsearchService:
             for _id in ranked_ids
         ]
 
+    async def update_document_tags(self, document_id: str, tags: list[str]) -> int:
+        """Update tags on all chunks belonging to a document. Returns count of updated docs."""
+        resp = await self.client.update_by_query(
+            index=settings.es_index,
+            body={
+                "query": {"term": {"document_id": document_id}},
+                "script": {
+                    "source": "ctx._source.tags = params.tags; ctx._source.metadata.tags = params.tags",
+                    "lang": "painless",
+                    "params": {"tags": tags},
+                },
+            },
+        )
+        await self.client.indices.refresh(index=settings.es_index)
+        return resp.get("updated", 0)
+
     async def list_documents(self) -> list[dict]:
         """List all unique documents with their chunk counts."""
         resp = await self.client.search(
@@ -174,6 +212,7 @@ class ElasticsearchService:
                 "filename": meta.get("filename", "unknown"),
                 "source_type": meta.get("source_type", "unknown"),
                 "chunk_count": bucket["doc_count"],
+                "tags": meta.get("tags", []),
                 "created_at": hit.get("created_at"),
             })
         return documents
@@ -202,6 +241,7 @@ class ElasticsearchService:
             "filename": meta.get("filename", "unknown"),
             "source_type": meta.get("source_type", "unknown"),
             "chunk_count": count_resp["count"],
+            "tags": meta.get("tags", []),
             "metadata": meta,
             "created_at": hits[0]["_source"].get("created_at"),
         }

@@ -10,17 +10,18 @@ async function request(url, options = {}) {
   return res.json();
 }
 
-export async function uploadFile(file) {
+export async function uploadFile(file, tags = []) {
   const form = new FormData();
   form.append('file', file);
+  if (tags.length) form.append('tags', tags.join(','));
   return request('/ingest/file', { method: 'POST', body: form });
 }
 
-export async function ingestUrl(url) {
+export async function ingestUrl(url, tags = []) {
   return request('/ingest/url', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ url }),
+    body: JSON.stringify({ url, tags }),
   });
 }
 
@@ -28,10 +29,11 @@ export async function getModels() {
   return request('/query/models');
 }
 
-export async function queryDocuments(question, topK = 5, history = [], model = null, chatId = null) {
+export async function queryDocuments(question, topK = 5, history = [], model = null, chatId = null, tags = []) {
   const payload = { question, top_k: topK, history };
   if (model) payload.model = model;
   if (chatId) payload.chat_id = chatId;
+  if (tags.length) payload.tags = tags;
   return request('/query', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -49,11 +51,12 @@ export async function deleteDocument(id) {
 
 export async function queryDocumentsStream(
   question,
-  { topK = 5, history = [], model = null, chatId = null, onToken, onSources, onDone, onError, signal }
+  { topK = 5, history = [], model = null, chatId = null, tags = [], onToken, onSources, onDone, onError, signal }
 ) {
   const payload = { question, top_k: topK, history };
   if (model) payload.model = model;
   if (chatId) payload.chat_id = chatId;
+  if (tags.length) payload.tags = tags;
 
   const res = await fetch(`${BASE}/query/stream`, {
     method: 'POST',
@@ -93,6 +96,14 @@ export async function queryDocumentsStream(
       }
     }
   }
+}
+
+export async function updateDocumentTags(id, tags) {
+  return request(`/documents/${id}/tags`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tags }),
+  });
 }
 
 export async function getDocumentChunks(id) {

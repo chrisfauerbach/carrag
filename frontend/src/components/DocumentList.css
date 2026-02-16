@@ -114,6 +114,59 @@
   white-space: nowrap;
 }
 
+.tag-badge {
+  display: inline-block;
+  background: #eff6ff;
+  color: var(--color-primary);
+  border: 1px solid #bfdbfe;
+  border-radius: 12px;
+  padding: 2px 8px;
+  font-size: 0.75rem;
+  margin: 1px 3px;
+}
+
+.tag-display {
+  cursor: pointer;
+  min-height: 24px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+}
+
+.no-tags {
+  color: var(--color-text-secondary);
+  font-size: 0.75rem;
+  font-style: italic;
+}
+
+.tag-edit {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tag-edit input {
+  padding: 4px 8px;
+  border: 1px solid var(--color-primary);
+  border-radius: 4px;
+  font-size: 0.8rem;
+  width: 140px;
+}
+
+.tag-edit button {
+  padding: 3px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  font-size: 0.7rem;
+  background: var(--color-surface);
+  cursor: pointer;
+}
+
+.tag-edit button:hover {
+  background: var(--color-bg);
+}
+
 .empty-state {
   text-align: center;
   padding: 40px 20px;

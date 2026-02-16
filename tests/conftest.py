@@ -33,12 +33,14 @@ def mock_es_service():
             "chunk_index": 1,
         },
     ])
+    svc.update_document_tags = AsyncMock(return_value=3)
     svc.list_documents = AsyncMock(return_value=[
         {
             "document_id": "doc-123",
             "filename": "test.txt",
             "source_type": "text",
             "chunk_count": 3,
+            "tags": [],
             "created_at": "2026-01-01T00:00:00+00:00",
         }
     ])
@@ -47,6 +49,7 @@ def mock_es_service():
         "filename": "test.txt",
         "source_type": "text",
         "chunk_count": 3,
+        "tags": [],
         "metadata": {"filename": "test.txt", "source_type": "text"},
         "created_at": "2026-01-01T00:00:00+00:00",
     })

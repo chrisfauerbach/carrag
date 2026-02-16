@@ -81,7 +81,17 @@ class TestPrepareRagContext:
     async def test_custom_top_k(self, mock_services):
         mock_embed, mock_es = mock_services
         await _prepare_rag_context("Q?", top_k=10)
-        mock_es.hybrid_search.assert_called_once_with(FAKE_VECTOR, "Q?", top_k=10)
+        mock_es.hybrid_search.assert_called_once_with(FAKE_VECTOR, "Q?", top_k=10, tags=None)
+
+    async def test_tags_forwarded_to_hybrid_search(self, mock_services):
+        mock_embed, mock_es = mock_services
+        await _prepare_rag_context("Q?", tags=["research", "ml"])
+        mock_es.hybrid_search.assert_called_once_with(FAKE_VECTOR, "Q?", top_k=5, tags=["research", "ml"])
+
+    async def test_no_tags_passes_none(self, mock_services):
+        mock_embed, mock_es = mock_services
+        await _prepare_rag_context("Q?")
+        mock_es.hybrid_search.assert_called_once_with(FAKE_VECTOR, "Q?", top_k=5, tags=None)
 
 
 class TestQueryRag:
@@ -138,7 +148,7 @@ class TestQueryRag:
     async def test_custom_top_k(self, mock_services, mock_ollama_generate):
         mock_embed, mock_es = mock_services
         await query_rag("Q?", top_k=10)
-        mock_es.hybrid_search.assert_called_once_with(FAKE_VECTOR, "Q?", top_k=10)
+        mock_es.hybrid_search.assert_called_once_with(FAKE_VECTOR, "Q?", top_k=10, tags=None)
 
     async def test_sources_format(self, mock_services, mock_ollama_generate):
         result = await query_rag("Q?")

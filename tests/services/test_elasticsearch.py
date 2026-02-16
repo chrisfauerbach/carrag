@@ -88,6 +88,34 @@ class TestIndexChunks:
         assert doc["embedding"] == [0.1] * 768
         assert "created_at" in doc
 
+    async def test_tags_stored_in_bulk_actions(self, service, mock_es_client):
+        chunks = [{"text": "hello", "document_id": "d1", "chunk_index": 0, "char_start": 0, "char_end": 5}]
+        embeddings = [[0.1] * 768]
+        metadata = {"filename": "test.txt"}
+
+        with patch("app.services.elasticsearch.async_bulk", new_callable=AsyncMock) as mock_bulk:
+            mock_bulk.return_value = (1, [])
+            await service.index_chunks(chunks, embeddings, metadata, tags=["research", "ml"])
+
+        call_args = mock_bulk.call_args
+        gen = call_args[0][1]
+        actions = list(gen)
+        assert actions[0]["_source"]["tags"] == ["research", "ml"]
+
+    async def test_default_empty_tags(self, service, mock_es_client):
+        chunks = [{"text": "hello", "document_id": "d1", "chunk_index": 0, "char_start": 0, "char_end": 5}]
+        embeddings = [[0.1] * 768]
+        metadata = {"filename": "test.txt"}
+
+        with patch("app.services.elasticsearch.async_bulk", new_callable=AsyncMock) as mock_bulk:
+            mock_bulk.return_value = (1, [])
+            await service.index_chunks(chunks, embeddings, metadata)
+
+        call_args = mock_bulk.call_args
+        gen = call_args[0][1]
+        actions = list(gen)
+        assert actions[0]["_source"]["tags"] == []
+
 
 class TestHybridSearch:
     def _make_hit(self, _id, content="text", doc_id="d1", chunk_index=0, score=1.0):
@@ -154,6 +182,35 @@ class TestHybridSearch:
         assert knn_body["knn"]["field"] == "embedding"
         assert "rank" not in knn_body
 
+    async def test_tags_filter_on_bm25_body(self, service, mock_es_client):
+        mock_es_client.search.side_effect = [
+            {"hits": {"hits": []}},
+            {"hits": {"hits": []}},
+        ]
+        await service.hybrid_search([0.1] * 768, "test query", top_k=5, tags=["research"])
+        bm25_body = mock_es_client.search.call_args_list[0][1]["body"]
+        assert bm25_body["query"]["bool"]["filter"] == [{"terms": {"tags": ["research"]}}]
+
+    async def test_tags_filter_on_knn_body(self, service, mock_es_client):
+        mock_es_client.search.side_effect = [
+            {"hits": {"hits": []}},
+            {"hits": {"hits": []}},
+        ]
+        await service.hybrid_search([0.1] * 768, "test query", top_k=5, tags=["research"])
+        knn_body = mock_es_client.search.call_args_list[1][1]["body"]
+        assert knn_body["knn"]["filter"] == {"terms": {"tags": ["research"]}}
+
+    async def test_no_tags_no_filter(self, service, mock_es_client):
+        mock_es_client.search.side_effect = [
+            {"hits": {"hits": []}},
+            {"hits": {"hits": []}},
+        ]
+        await service.hybrid_search([0.1] * 768, "test query", top_k=5)
+        bm25_body = mock_es_client.search.call_args_list[0][1]["body"]
+        assert "bool" not in bm25_body["query"]
+        knn_body = mock_es_client.search.call_args_list[1][1]["body"]
+        assert "filter" not in knn_body["knn"]
+
     async def test_rrf_fuses_overlapping_results(self, service, mock_es_client):
         """Docs appearing in both lists get higher RRF scores than docs in only one."""
         bm25_resp = {
@@ -185,6 +242,25 @@ class TestHybridSearch:
         assert single_scores == {"bm25 only", "knn only"}
         for r in results[1:]:
             assert abs(r["score"] - 1.0 / 62) < 1e-9
+
+
+class TestUpdateDocumentTags:
+    async def test_returns_updated_count(self, service, mock_es_client):
+        mock_es_client.update_by_query = AsyncMock(return_value={"updated": 5})
+        count = await service.update_document_tags("doc-1", ["research", "ml"])
+        assert count == 5
+
+    async def test_calls_refresh(self, service, mock_es_client):
+        mock_es_client.update_by_query = AsyncMock(return_value={"updated": 1})
+        await service.update_document_tags("doc-1", ["tag"])
+        mock_es_client.indices.refresh.assert_called_once()
+
+    async def test_query_matches_document_id(self, service, mock_es_client):
+        mock_es_client.update_by_query = AsyncMock(return_value={"updated": 1})
+        await service.update_document_tags("doc-1", ["tag"])
+        call_kwargs = mock_es_client.update_by_query.call_args[1]
+        assert call_kwargs["body"]["query"]["term"]["document_id"] == "doc-1"
+        assert call_kwargs["body"]["script"]["params"]["tags"] == ["tag"]
 
 
 class TestListDocuments:
