@@ -34,7 +34,7 @@ def mock_services():
         patch("app.services.rag.es_service") as mock_es,
     ):
         mock_embed.embed_single = AsyncMock(return_value=FAKE_VECTOR)
-        mock_es.knn_search = AsyncMock(return_value=FAKE_CHUNKS)
+        mock_es.hybrid_search = AsyncMock(return_value=FAKE_CHUNKS)
         yield mock_embed, mock_es
 
 
@@ -81,7 +81,7 @@ class TestPrepareRagContext:
     async def test_custom_top_k(self, mock_services):
         mock_embed, mock_es = mock_services
         await _prepare_rag_context("Q?", top_k=10)
-        mock_es.knn_search.assert_called_once_with(FAKE_VECTOR, top_k=10)
+        mock_es.hybrid_search.assert_called_once_with(FAKE_VECTOR, "Q?", top_k=10)
 
 
 class TestQueryRag:
@@ -94,7 +94,7 @@ class TestQueryRag:
         assert result["model"] == "llama3.2"
         assert "duration_ms" in result
         mock_embed.embed_single.assert_called_once_with("What is X?", prefix="search_query: ")
-        mock_es.knn_search.assert_called_once()
+        mock_es.hybrid_search.assert_called_once()
 
     async def test_prompt_contains_context(self, mock_services, mock_ollama_generate):
         await query_rag("What is X?")
@@ -138,7 +138,7 @@ class TestQueryRag:
     async def test_custom_top_k(self, mock_services, mock_ollama_generate):
         mock_embed, mock_es = mock_services
         await query_rag("Q?", top_k=10)
-        mock_es.knn_search.assert_called_once_with(FAKE_VECTOR, top_k=10)
+        mock_es.hybrid_search.assert_called_once_with(FAKE_VECTOR, "Q?", top_k=10)
 
     async def test_sources_format(self, mock_services, mock_ollama_generate):
         result = await query_rag("Q?")

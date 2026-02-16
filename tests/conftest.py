@@ -17,7 +17,7 @@ def mock_es_service():
     svc = AsyncMock()
     svc.init = AsyncMock()
     svc.index_chunks = AsyncMock(return_value=3)
-    svc.knn_search = AsyncMock(return_value=[
+    svc.hybrid_search = AsyncMock(return_value=[
         {
             "content": "chunk text 1",
             "score": 0.95,

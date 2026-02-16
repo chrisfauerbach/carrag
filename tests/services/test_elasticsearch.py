@@ -89,42 +89,102 @@ class TestIndexChunks:
         assert "created_at" in doc
 
 
-class TestKnnSearch:
+class TestHybridSearch:
+    def _make_hit(self, _id, content="text", doc_id="d1", chunk_index=0, score=1.0):
+        return {
+            "_id": _id,
+            "_score": score,
+            "_source": {
+                "content": content,
+                "document_id": doc_id,
+                "chunk_index": chunk_index,
+                "metadata": {"filename": "test.txt"},
+                "created_at": "2026-01-01T00:00:00",
+            },
+        }
+
     async def test_returns_formatted_results(self, service, mock_es_client):
-        mock_es_client.search.return_value = {
+        bm25_resp = {"hits": {"hits": [self._make_hit("id1", content="relevant text")]}}
+        knn_resp = {"hits": {"hits": [self._make_hit("id1", content="relevant text")]}}
+        mock_es_client.search.side_effect = [bm25_resp, knn_resp]
+
+        results = await service.hybrid_search([0.1] * 768, "test query", top_k=5)
+        assert len(results) == 1
+        assert results[0]["content"] == "relevant text"
+        assert results[0]["document_id"] == "d1"
+        assert results[0]["metadata"]["filename"] == "test.txt"
+        # Appears rank 1 in both lists: 1/(60+1) + 1/(60+1)
+        expected_score = 2.0 / 61
+        assert abs(results[0]["score"] - expected_score) < 1e-9
+
+    async def test_empty_results(self, service, mock_es_client):
+        mock_es_client.search.side_effect = [
+            {"hits": {"hits": []}},
+            {"hits": {"hits": []}},
+        ]
+        results = await service.hybrid_search([0.1] * 768, "test query")
+        assert results == []
+
+    async def test_passes_top_k_to_both_queries(self, service, mock_es_client):
+        mock_es_client.search.side_effect = [
+            {"hits": {"hits": []}},
+            {"hits": {"hits": []}},
+        ]
+        await service.hybrid_search([0.1] * 768, "test query", top_k=10)
+        assert mock_es_client.search.call_count == 2
+        bm25_kwargs = mock_es_client.search.call_args_list[0][1]
+        knn_kwargs = mock_es_client.search.call_args_list[1][1]
+        assert bm25_kwargs["size"] == 10
+        assert knn_kwargs["size"] == 10
+
+    async def test_sends_separate_bm25_and_knn_queries(self, service, mock_es_client):
+        mock_es_client.search.side_effect = [
+            {"hits": {"hits": []}},
+            {"hits": {"hits": []}},
+        ]
+        await service.hybrid_search([0.1] * 768, "test query", top_k=5)
+        assert mock_es_client.search.call_count == 2
+
+        bm25_body = mock_es_client.search.call_args_list[0][1]["body"]
+        assert bm25_body["query"]["match"]["content"]["query"] == "test query"
+        assert "knn" not in bm25_body
+        assert "rank" not in bm25_body
+
+        knn_body = mock_es_client.search.call_args_list[1][1]["body"]
+        assert knn_body["knn"]["field"] == "embedding"
+        assert "rank" not in knn_body
+
+    async def test_rrf_fuses_overlapping_results(self, service, mock_es_client):
+        """Docs appearing in both lists get higher RRF scores than docs in only one."""
+        bm25_resp = {
             "hits": {
                 "hits": [
-                    {
-                        "_score": 0.95,
-                        "_source": {
-                            "content": "relevant text",
-                            "document_id": "d1",
-                            "chunk_index": 0,
-                            "metadata": {"filename": "test.txt"},
-                            "created_at": "2026-01-01T00:00:00",
-                        },
-                    }
+                    self._make_hit("shared", content="shared doc", chunk_index=0),
+                    self._make_hit("bm25_only", content="bm25 only", chunk_index=1),
                 ]
             }
         }
+        knn_resp = {
+            "hits": {
+                "hits": [
+                    self._make_hit("shared", content="shared doc", chunk_index=0),
+                    self._make_hit("knn_only", content="knn only", chunk_index=2),
+                ]
+            }
+        }
+        mock_es_client.search.side_effect = [bm25_resp, knn_resp]
 
-        results = await service.knn_search([0.1] * 768, top_k=5)
-        assert len(results) == 1
-        assert results[0]["content"] == "relevant text"
-        assert results[0]["score"] == 0.95
-        assert results[0]["document_id"] == "d1"
-        assert results[0]["metadata"]["filename"] == "test.txt"
+        results = await service.hybrid_search([0.1] * 768, "test query", top_k=3)
 
-    async def test_empty_results(self, service, mock_es_client):
-        mock_es_client.search.return_value = {"hits": {"hits": []}}
-        results = await service.knn_search([0.1] * 768)
-        assert results == []
-
-    async def test_passes_top_k(self, service, mock_es_client):
-        mock_es_client.search.return_value = {"hits": {"hits": []}}
-        await service.knn_search([0.1] * 768, top_k=10)
-        call_kwargs = mock_es_client.search.call_args[1]
-        assert call_kwargs["size"] == 10
+        assert len(results) == 3
+        # "shared" appears in both lists at rank 1 -> score = 2/(60+1)
+        assert results[0]["content"] == "shared doc"
+        assert abs(results[0]["score"] - 2.0 / 61) < 1e-9
+        # The other two each appear once at rank 2 -> score = 1/(60+2)
+        single_scores = {r["content"] for r in results[1:]}
+        assert single_scores == {"bm25 only", "knn only"}
+        for r in results[1:]:
+            assert abs(r["score"] - 1.0 / 62) < 1e-9
 
 
 class TestListDocuments:

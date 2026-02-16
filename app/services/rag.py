@@ -29,7 +29,7 @@ async def _prepare_rag_context(
     query_vector = await embedding_service.embed_single(question, prefix="search_query: ")
 
     # 2. Retrieve similar chunks
-    chunks = await es_service.knn_search(query_vector, top_k=top_k)
+    chunks = await es_service.hybrid_search(query_vector, question, top_k=top_k)
 
     # 3. Build context from retrieved chunks
     context_parts = []

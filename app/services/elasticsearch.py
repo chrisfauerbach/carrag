@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from datetime import datetime, timezone
 
@@ -84,31 +85,64 @@ class ElasticsearchService:
         await self.client.indices.refresh(index=settings.es_index)
         return success
 
-    async def knn_search(self, query_vector: list[float], top_k: int = 5) -> list[dict]:
-        """Find the top-k most similar chunks using kNN search."""
-        resp = await self.client.search(
-            index=settings.es_index,
-            body={
-                "knn": {
-                    "field": "embedding",
-                    "query_vector": query_vector,
-                    "k": top_k,
-                    "num_candidates": top_k * 10,
+    async def hybrid_search(self, query_vector: list[float], query_text: str, top_k: int = 5) -> list[dict]:
+        """Find the top-k most relevant chunks using hybrid BM25 + kNN search with manual RRF."""
+        source_fields = ["content", "document_id", "chunk_index", "metadata", "created_at"]
+
+        bm25_resp, knn_resp = await asyncio.gather(
+            self.client.search(
+                index=settings.es_index,
+                body={
+                    "query": {"match": {"content": {"query": query_text}}},
+                    "_source": source_fields,
                 },
-                "_source": ["content", "document_id", "chunk_index", "metadata", "created_at"],
-            },
-            size=top_k,
+                size=top_k,
+            ),
+            self.client.search(
+                index=settings.es_index,
+                body={
+                    "knn": {
+                        "field": "embedding",
+                        "query_vector": query_vector,
+                        "k": top_k,
+                        "num_candidates": top_k * 10,
+                    },
+                    "_source": source_fields,
+                },
+                size=top_k,
+            ),
         )
-        results = []
-        for hit in resp["hits"]["hits"]:
-            results.append({
-                "content": hit["_source"]["content"],
-                "score": hit["_score"],
-                "metadata": hit["_source"].get("metadata", {}),
-                "document_id": hit["_source"]["document_id"],
-                "chunk_index": hit["_source"]["chunk_index"],
-            })
-        return results
+
+        return self._rrf_fuse(bm25_resp, knn_resp, top_k)
+
+    @staticmethod
+    def _rrf_fuse(bm25_resp: dict, knn_resp: dict, top_k: int, k: int = 60) -> list[dict]:
+        """Fuse two ranked lists using Reciprocal Rank Fusion: score = sum(1/(k+rank))."""
+        docs: dict[str, dict] = {}  # _id -> source data
+        scores: dict[str, float] = {}  # _id -> cumulative RRF score
+
+        for rank, hit in enumerate(bm25_resp["hits"]["hits"], start=1):
+            _id = hit["_id"]
+            scores[_id] = scores.get(_id, 0.0) + 1.0 / (k + rank)
+            docs[_id] = hit["_source"]
+
+        for rank, hit in enumerate(knn_resp["hits"]["hits"], start=1):
+            _id = hit["_id"]
+            scores[_id] = scores.get(_id, 0.0) + 1.0 / (k + rank)
+            docs[_id] = hit["_source"]
+
+        ranked_ids = sorted(scores, key=lambda _id: scores[_id], reverse=True)[:top_k]
+
+        return [
+            {
+                "content": docs[_id]["content"],
+                "score": scores[_id],
+                "metadata": docs[_id].get("metadata", {}),
+                "document_id": docs[_id]["document_id"],
+                "chunk_index": docs[_id]["chunk_index"],
+            }
+            for _id in ranked_ids
+        ]
 
     async def list_documents(self) -> list[dict]:
         """List all unique documents with their chunk counts."""
