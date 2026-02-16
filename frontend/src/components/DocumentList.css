@@ -1,0 +1,74 @@
+.document-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.doc-list-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.doc-list-header h2 {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.refresh-btn {
+  padding: 6px 14px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  font-size: 0.8rem;
+  color: var(--color-text-secondary);
+}
+
+.refresh-btn:hover {
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+.doc-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.doc-table th {
+  text-align: left;
+  padding: 10px 12px;
+  border-bottom: 2px solid var(--color-border);
+  color: var(--color-text-secondary);
+  font-weight: 600;
+  font-size: 0.8rem;
+}
+
+.doc-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.doc-table tr:last-child td {
+  border-bottom: none;
+}
+
+.delete-btn {
+  padding: 4px 10px;
+  background: none;
+  border: 1px solid var(--color-error);
+  color: var(--color-error);
+  border-radius: 4px;
+  font-size: 0.75rem;
+}
+
+.delete-btn:hover {
+  background: #fef2f2;
+}
+
+.empty-state {
+  text-align: center;
+  padding: 40px 20px;
+  color: var(--color-text-secondary);
+  font-size: 0.9rem;
+}

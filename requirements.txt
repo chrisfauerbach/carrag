@@ -1,0 +1,9 @@
+fastapi==0.115.6
+uvicorn==0.34.0
+elasticsearch[async]==8.15.1
+httpx==0.28.1
+pymupdf==1.25.1
+beautifulsoup4==4.12.3
+trafilatura==2.0.0
+python-multipart==0.0.20
+pydantic-settings==2.7.1

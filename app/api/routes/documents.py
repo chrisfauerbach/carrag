@@ -1,0 +1,41 @@
+from fastapi import APIRouter, HTTPException
+
+from app.models.schemas import (
+    DocumentListResponse,
+    DocumentDetailResponse,
+    DocumentDeleteResponse,
+    DocumentInfo,
+)
+from app.services.elasticsearch import es_service
+
+router = APIRouter()
+
+
+@router.get("", response_model=DocumentListResponse)
+async def list_documents():
+    """List all ingested documents."""
+    docs = await es_service.list_documents()
+    return DocumentListResponse(
+        documents=[DocumentInfo(**d) for d in docs],
+        total=len(docs),
+    )
+
+
+@router.get("/{document_id}", response_model=DocumentDetailResponse)
+async def get_document(document_id: str):
+    """Get details for a specific document."""
+    doc = await es_service.get_document(document_id)
+    if doc is None:
+        raise HTTPException(404, "Document not found")
+    return DocumentDetailResponse(**doc)
+
+
+@router.delete("/{document_id}", response_model=DocumentDeleteResponse)
+async def delete_document(document_id: str):
+    """Delete a document and all its chunks."""
+    doc = await es_service.get_document(document_id)
+    if doc is None:
+        raise HTTPException(404, "Document not found")
+
+    deleted = await es_service.delete_document(document_id)
+    return DocumentDeleteResponse(document_id=document_id, chunks_deleted=deleted)

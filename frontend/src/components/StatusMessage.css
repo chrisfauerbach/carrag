@@ -1,0 +1,40 @@
+.status-message {
+  padding: 12px 16px;
+  border-radius: var(--radius);
+  margin-bottom: 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.875rem;
+}
+
+.status-message.success {
+  background: #f0fdf4;
+  color: var(--color-success);
+  border: 1px solid #bbf7d0;
+}
+
+.status-message.error {
+  background: #fef2f2;
+  color: var(--color-error);
+  border: 1px solid #fecaca;
+}
+
+.status-message.info {
+  background: #eff6ff;
+  color: var(--color-info);
+  border: 1px solid #bfdbfe;
+}
+
+.status-message .dismiss {
+  background: none;
+  border: none;
+  font-size: 1.1rem;
+  color: inherit;
+  opacity: 0.6;
+  padding: 0 4px;
+}
+
+.status-message .dismiss:hover {
+  opacity: 1;
+}

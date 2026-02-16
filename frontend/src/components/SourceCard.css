@@ -1,0 +1,45 @@
+.source-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  margin-bottom: 8px;
+}
+
+.source-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  font-size: 0.8rem;
+  color: var(--color-text-secondary);
+}
+
+.source-card-header .source-number {
+  font-weight: 600;
+  color: var(--color-primary);
+}
+
+.source-card-header .score {
+  font-variant-numeric: tabular-nums;
+}
+
+.source-card-text {
+  font-size: 0.85rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.source-card .toggle {
+  background: none;
+  border: none;
+  color: var(--color-primary);
+  font-size: 0.8rem;
+  padding: 4px 0;
+  margin-top: 4px;
+}
+
+.source-card .toggle:hover {
+  text-decoration: underline;
+}
