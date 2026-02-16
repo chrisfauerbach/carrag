@@ -2,8 +2,9 @@ import { useState } from 'react';
 import QueryPanel from './components/QueryPanel';
 import UploadPanel from './components/UploadPanel';
 import DocumentList from './components/DocumentList';
+import SimilarityMap from './components/SimilarityMap';
 
-const TABS = ['Query', 'Upload', 'Documents'];
+const TABS = ['Query', 'Upload', 'Documents', 'Similarity'];
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('Query');
@@ -30,6 +31,7 @@ export default function App() {
       {activeTab === 'Query' && <QueryPanel />}
       {activeTab === 'Upload' && <UploadPanel />}
       {activeTab === 'Documents' && <DocumentList />}
+      {activeTab === 'Similarity' && <SimilarityMap />}
     </div>
   );
 }

@@ -235,6 +235,79 @@ class TestDeleteDocument:
         mock_es_client.indices.refresh.assert_called_once()
 
 
+class TestGetAllEmbeddingsByDocument:
+    async def test_groups_by_document_id(self, service, mock_es_client):
+        mock_es_client.search.return_value = {
+            "_scroll_id": "scroll-1",
+            "hits": {
+                "hits": [
+                    {"_source": {"document_id": "doc-1", "embedding": [0.1, 0.2]}},
+                    {"_source": {"document_id": "doc-1", "embedding": [0.3, 0.4]}},
+                    {"_source": {"document_id": "doc-2", "embedding": [0.5, 0.6]}},
+                ]
+            },
+        }
+        mock_es_client.scroll.return_value = {
+            "_scroll_id": "scroll-2",
+            "hits": {"hits": []},
+        }
+        mock_es_client.clear_scroll = AsyncMock()
+
+        result = await service.get_all_embeddings_by_document()
+        assert len(result["doc-1"]) == 2
+        assert len(result["doc-2"]) == 1
+        assert result["doc-1"][0] == [0.1, 0.2]
+
+    async def test_empty_index(self, service, mock_es_client):
+        mock_es_client.search.return_value = {
+            "_scroll_id": "scroll-1",
+            "hits": {"hits": []},
+        }
+        mock_es_client.clear_scroll = AsyncMock()
+
+        result = await service.get_all_embeddings_by_document()
+        assert result == {}
+
+    async def test_clears_scroll(self, service, mock_es_client):
+        mock_es_client.search.return_value = {
+            "_scroll_id": "scroll-1",
+            "hits": {"hits": []},
+        }
+        mock_es_client.clear_scroll = AsyncMock()
+
+        await service.get_all_embeddings_by_document()
+        mock_es_client.clear_scroll.assert_called_once_with(scroll_id="scroll-1")
+
+    async def test_handles_multiple_pages(self, service, mock_es_client):
+        mock_es_client.search.return_value = {
+            "_scroll_id": "scroll-1",
+            "hits": {
+                "hits": [
+                    {"_source": {"document_id": "doc-1", "embedding": [0.1]}},
+                ]
+            },
+        }
+        mock_es_client.scroll.side_effect = [
+            {
+                "_scroll_id": "scroll-2",
+                "hits": {
+                    "hits": [
+                        {"_source": {"document_id": "doc-2", "embedding": [0.2]}},
+                    ]
+                },
+            },
+            {
+                "_scroll_id": "scroll-3",
+                "hits": {"hits": []},
+            },
+        ]
+        mock_es_client.clear_scroll = AsyncMock()
+
+        result = await service.get_all_embeddings_by_document()
+        assert "doc-1" in result
+        assert "doc-2" in result
+
+
 class TestClose:
     async def test_closes_client(self, service, mock_es_client):
         await service.close()

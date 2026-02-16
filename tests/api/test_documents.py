@@ -84,6 +84,51 @@ class TestGetDocumentChunks:
         assert data["chunks"] == []
 
 
+class TestDocumentSimilarity:
+    async def test_returns_nodes_and_edges(self, app_client):
+        app_client._mock_sim.return_value = {
+            "nodes": [
+                {"document_id": "doc-1", "filename": "a.txt", "source_type": "text", "chunk_count": 3},
+                {"document_id": "doc-2", "filename": "b.pdf", "source_type": "pdf", "chunk_count": 5},
+            ],
+            "edges": [
+                {"source": "doc-1", "target": "doc-2", "similarity": 0.85},
+            ],
+            "threshold": 0.3,
+        }
+        resp = await app_client.get("/documents/similarity")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data["nodes"]) == 2
+        assert len(data["edges"]) == 1
+        assert data["edges"][0]["similarity"] == 0.85
+
+    async def test_threshold_parameter(self, app_client):
+        resp = await app_client.get("/documents/similarity?threshold=0.7")
+        assert resp.status_code == 200
+        app_client._mock_sim.assert_called_with(threshold=0.7)
+
+    async def test_invalid_threshold(self, app_client):
+        resp = await app_client.get("/documents/similarity?threshold=1.5")
+        assert resp.status_code == 422
+
+    async def test_negative_threshold(self, app_client):
+        resp = await app_client.get("/documents/similarity?threshold=-0.1")
+        assert resp.status_code == 422
+
+    async def test_empty_index(self, app_client):
+        app_client._mock_sim.return_value = {
+            "nodes": [],
+            "edges": [],
+            "threshold": 0.3,
+        }
+        resp = await app_client.get("/documents/similarity")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["nodes"] == []
+        assert data["edges"] == []
+
+
 class TestDeleteDocument:
     async def test_delete_found(self, app_client):
         resp = await app_client.delete("/documents/doc-123")

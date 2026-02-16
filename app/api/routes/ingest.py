@@ -47,7 +47,10 @@ async def ingest_file(file: UploadFile = File(...)):
 @router.post("/url", response_model=IngestResponse)
 async def ingest_url(request: IngestURLRequest):
     """Ingest content from a web URL."""
-    parsed = await parse_url(request.url)
+    try:
+        parsed = await parse_url(request.url)
+    except Exception as e:
+        raise HTTPException(502, f"Failed to fetch URL: {e}")
 
     if not parsed["content"].strip():
         raise HTTPException(400, "No text content could be extracted from the URL")

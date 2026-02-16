@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from app.models.schemas import (
     DocumentListResponse,
@@ -7,8 +7,12 @@ from app.models.schemas import (
     DocumentChunksResponse,
     ChunkInfo,
     DocumentInfo,
+    SimilarityResponse,
+    SimilarityNode,
+    SimilarityEdge,
 )
 from app.services.elasticsearch import es_service
+from app.services.similarity import compute_document_similarity
 
 router = APIRouter()
 
@@ -20,6 +24,19 @@ async def list_documents():
     return DocumentListResponse(
         documents=[DocumentInfo(**d) for d in docs],
         total=len(docs),
+    )
+
+
+@router.get("/similarity", response_model=SimilarityResponse)
+async def document_similarity(
+    threshold: float = Query(default=0.3, ge=0.0, le=1.0),
+):
+    """Compute pairwise document similarity based on centroid embeddings."""
+    result = await compute_document_similarity(threshold=threshold)
+    return SimilarityResponse(
+        nodes=[SimilarityNode(**n) for n in result["nodes"]],
+        edges=[SimilarityEdge(**e) for e in result["edges"]],
+        threshold=result["threshold"],
     )
 
 

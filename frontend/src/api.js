@@ -24,11 +24,17 @@ export async function ingestUrl(url) {
   });
 }
 
-export async function queryDocuments(question, topK = 5, history = []) {
+export async function getModels() {
+  return request('/query/models');
+}
+
+export async function queryDocuments(question, topK = 5, history = [], model = null) {
+  const payload = { question, top_k: topK, history };
+  if (model) payload.model = model;
   return request('/query', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ question, top_k: topK, history }),
+    body: JSON.stringify(payload),
   });
 }
 
@@ -42,4 +48,8 @@ export async function deleteDocument(id) {
 
 export async function getDocumentChunks(id) {
   return request(`/documents/${id}/chunks`);
+}
+
+export async function getDocumentSimilarity(threshold = 0) {
+  return request(`/documents/similarity?threshold=${threshold}`);
 }

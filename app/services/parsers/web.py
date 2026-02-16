@@ -11,7 +11,10 @@ async def parse_url(url: str) -> dict:
     Uses trafilatura with BeautifulSoup fallback.
     Returns dict with 'content' and 'metadata'.
     """
-    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+    headers = {
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    }
+    async with httpx.AsyncClient(timeout=30, follow_redirects=True, headers=headers) as client:
         resp = await client.get(url)
         resp.raise_for_status()
         html = resp.text

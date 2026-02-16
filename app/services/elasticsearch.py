@@ -194,6 +194,33 @@ class ElasticsearchService:
         await self.client.indices.refresh(index=settings.es_index)
         return resp.get("deleted", 0)
 
+    async def get_all_embeddings_by_document(self) -> dict[str, list[list[float]]]:
+        """Fetch all chunk embeddings grouped by document_id using the scroll API."""
+        result: dict[str, list[list[float]]] = {}
+        resp = await self.client.search(
+            index=settings.es_index,
+            body={
+                "_source": ["document_id", "embedding"],
+                "size": 500,
+            },
+            scroll="2m",
+        )
+        scroll_id = resp["_scroll_id"]
+        try:
+            while True:
+                hits = resp["hits"]["hits"]
+                if not hits:
+                    break
+                for hit in hits:
+                    doc_id = hit["_source"]["document_id"]
+                    embedding = hit["_source"]["embedding"]
+                    result.setdefault(doc_id, []).append(embedding)
+                resp = await self.client.scroll(scroll_id=scroll_id, scroll="2m")
+                scroll_id = resp["_scroll_id"]
+        finally:
+            await self.client.clear_scroll(scroll_id=scroll_id)
+        return result
+
     async def close(self):
         if self._client:
             await self._client.close()

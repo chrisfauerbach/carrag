@@ -1,7 +1,32 @@
-"""Tests for POST /query endpoint."""
+"""Tests for query endpoints."""
 
 import pytest
 from unittest.mock import AsyncMock
+
+
+class TestListModels:
+    async def test_returns_models_and_default(self, app_client):
+        resp = await app_client.get("/query/models")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "models" in data
+        assert "default" in data
+        assert isinstance(data["models"], list)
+        assert len(data["models"]) == 1
+        assert "llama3.2" in data["models"]
+        assert "nomic-embed-text" not in data["models"]
+        assert data["default"] == "llama3.2"
+
+    async def test_filters_embedding_models(self, app_client):
+        resp = await app_client.get("/query/models")
+        data = resp.json()
+        for name in data["models"]:
+            assert "embed" not in name.lower()
+
+    async def test_models_sorted(self, app_client):
+        resp = await app_client.get("/query/models")
+        data = resp.json()
+        assert data["models"] == sorted(data["models"])
 
 
 class TestQuery:

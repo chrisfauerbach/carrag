@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { queryDocuments } from '../api';
+import { queryDocuments, getModels } from '../api';
 import ChatMessage from './ChatMessage';
 import StatusMessage from './StatusMessage';
 import './QueryPanel.css';
@@ -8,12 +8,23 @@ export default function QueryPanel() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [topK, setTopK] = useState(5);
+  const [models, setModels] = useState([]);
+  const [selectedModel, setSelectedModel] = useState('');
   const [showTopK, setShowTopK] = useState(false);
   const [loading, setLoading] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState('');
   const timerRef = useRef(null);
   const chatEndRef = useRef(null);
+
+  useEffect(() => {
+    getModels()
+      .then((data) => {
+        setModels(data.models);
+        setSelectedModel(data.default);
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     return () => clearInterval(timerRef.current);
@@ -45,7 +56,7 @@ export default function QueryPanel() {
 
     try {
       const history = buildHistory();
-      const data = await queryDocuments(question, topK, history);
+      const data = await queryDocuments(question, topK, history, selectedModel || null);
       const assistantMsg = {
         role: 'assistant',
         content: data.answer,
@@ -136,16 +147,31 @@ export default function QueryPanel() {
           </button>
 
           {showTopK && (
-            <div className="topk-control">
-              <label>Sources:</label>
-              <input
-                type="number"
-                min={1}
-                max={20}
-                value={topK}
-                onChange={(e) => setTopK(Number(e.target.value))}
-              />
-            </div>
+            <>
+              <div className="topk-control">
+                <label>Sources:</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={20}
+                  value={topK}
+                  onChange={(e) => setTopK(Number(e.target.value))}
+                />
+              </div>
+              {models.length > 0 && (
+                <div className="model-control">
+                  <label>Model:</label>
+                  <select
+                    value={selectedModel}
+                    onChange={(e) => setSelectedModel(e.target.value)}
+                  >
+                    {models.map((m) => (
+                      <option key={m} value={m}>{m}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>

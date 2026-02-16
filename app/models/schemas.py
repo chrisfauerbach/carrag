@@ -16,6 +16,13 @@ class IngestResponse(BaseModel):
     status: str = "ingested"
 
 
+# --- Models ---
+
+class ModelsResponse(BaseModel):
+    models: list[str]
+    default: str
+
+
 # --- Query ---
 
 class ChatMessage(BaseModel):
@@ -87,3 +94,24 @@ class DocumentChunksResponse(BaseModel):
     source_type: str
     chunk_count: int
     chunks: list[ChunkInfo]
+
+
+# --- Similarity ---
+
+class SimilarityNode(BaseModel):
+    document_id: str
+    filename: str
+    source_type: str
+    chunk_count: int
+
+
+class SimilarityEdge(BaseModel):
+    source: str
+    target: str
+    similarity: float
+
+
+class SimilarityResponse(BaseModel):
+    nodes: list[SimilarityNode]
+    edges: list[SimilarityEdge]
+    threshold: float
