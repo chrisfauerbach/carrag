@@ -292,9 +292,11 @@ es_client.indices.refresh()   ← makes documents immediately searchable
 
 ### The ES index schema
 
-Created once at app startup. The key field is `embedding`:
+Created once at app startup. Two fields drive search:
 
 ```
+content: text            ← standard full-text field (BM25 keyword matching)
+
 embedding: dense_vector
   ├── dims: 768          (matches nomic-embed-text output)
   ├── index: true        (builds HNSW index for fast kNN search)
@@ -354,7 +356,7 @@ Time ──▶
 
 ## What Happens Later: Query Flow
 
-Once documents are stored, querying uses the same embedding model to find relevant chunks:
+Once documents are stored, querying uses hybrid search (BM25 keywords + kNN vectors) to find relevant chunks, then passes them to the LLM.
 
 ```
 POST /query {"question": "What is X?"}
@@ -363,25 +365,72 @@ POST /query {"question": "What is X?"}
    Embed the question  ──▶  Ollama /api/embed  ──▶  768-dim query vector
         │
         ▼
-   kNN search in ES    ──▶  Find top-k chunks with highest cosine similarity
-        │                    (default k=5, searches 50 candidates)
-        ▼
-   Build prompt:
-        "Context:
-         [Source 1: file.pdf]
-         chunk text...
-         ---
-         [Source 2: file.pdf]
-         chunk text...
-
-         Question: What is X?
-         Answer based on the context above:"
+   Hybrid search (two ES queries run concurrently via asyncio.gather)
+        │
+        ├──▶  BM25 match on "content" field  ──▶  top-k by keyword relevance
+        │
+        └──▶  kNN search on "embedding" field ──▶  top-k by cosine similarity
+                                                    (num_candidates = k×10)
         │
         ▼
-   Ollama /api/generate (llama3.2, stream=false)
+   Reciprocal Rank Fusion (RRF) merges both ranked lists
         │
         ▼
-   Return {answer, sources with scores, model, duration_ms}
+   Build prompt with top-k fused results
+        │
+        ▼
+   Ollama /api/generate (llama3.2)
+        │
+        ▼
+   Return {answer, sources with RRF scores, model, duration_ms}
 ```
 
-The LLM is instructed via system prompt to ONLY use the provided context and to cite sources.
+### Why hybrid search?
+
+Keyword search (BM25) catches exact term matches the vector model might miss. Semantic search (kNN) catches meaning even when different words are used. Running both and fusing the results gives better retrieval than either alone.
+
+### Reciprocal Rank Fusion (RRF)
+
+ES's built-in `rank.rrf` requires a paid license. We implement RRF manually in `_rrf_fuse()`:
+
+```
+For each ranked list, score each doc by its position:
+    score = 1 / (k + rank)        k = 60 (standard constant)
+
+If a doc appears in both lists, its scores are summed.
+Sort by total score descending, take top-k.
+```
+
+**Example** with `top_k=3`:
+
+```
+BM25 results:       kNN results:        RRF scores:
+ 1. chunk-A          1. chunk-C           chunk-A: 1/61 + 1/62 = 0.0328 + 0.0161 = 0.0489  ← both lists
+ 2. chunk-B          2. chunk-A           chunk-C: 1/61          = 0.0164                   ← kNN only
+ 3. chunk-D          3. chunk-E           chunk-B: 1/62          = 0.0161                   ← BM25 only
+
+Final ranking: chunk-A, chunk-C, chunk-B
+```
+
+Documents found by both search methods float to the top. Documents found by only one method still appear but rank lower.
+
+### The prompt
+
+Retrieved chunks are formatted into context for the LLM:
+
+```
+Context:
+[Source 1: file.pdf]
+chunk text...
+
+---
+
+[Source 2: file.pdf]
+chunk text...
+
+Question: What is X?
+
+Answer based on the context above:
+```
+
+The LLM is instructed via system prompt to ONLY use the provided context and to cite sources. The query also supports optional conversation history, which is appended before the question.
