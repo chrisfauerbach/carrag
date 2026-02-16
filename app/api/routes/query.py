@@ -13,6 +13,7 @@ async def query(request: QueryRequest):
         question=request.question,
         top_k=request.top_k,
         model=request.model,
+        history=request.history,
     )
 
     response = QueryResponse(

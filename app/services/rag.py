@@ -14,7 +14,7 @@ Use ONLY the context below to answer the question. If the context doesn't contai
 Always cite which source(s) you used in your answer."""
 
 
-async def query_rag(question: str, top_k: int = 5, model: str | None = None) -> dict:
+async def query_rag(question: str, top_k: int = 5, model: str | None = None, history: list | None = None) -> dict:
     """Full RAG pipeline: embed question -> retrieve chunks -> generate answer."""
     start = time.time()
     llm_model = model or settings.llm_model
@@ -32,10 +32,20 @@ async def query_rag(question: str, top_k: int = 5, model: str | None = None) -> 
         context_parts.append(f"[Source {i}: {source}]\n{chunk['content']}")
     context = "\n\n---\n\n".join(context_parts)
 
-    # 4. Build the prompt
+    # 4. Build the prompt (with optional conversation history)
+    history_block = ""
+    if history:
+        history_lines = []
+        for msg in history:
+            role = msg.role if hasattr(msg, "role") else msg["role"]
+            content = msg.content if hasattr(msg, "content") else msg["content"]
+            label = "User" if role == "user" else "Assistant"
+            history_lines.append(f"{label}: {content}")
+        history_block = "\n\nConversation history:\n" + "\n".join(history_lines) + "\n"
+
     prompt = f"""Context:
 {context}
-
+{history_block}
 Question: {question}
 
 Answer based on the context above:"""

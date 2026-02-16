@@ -18,11 +18,17 @@ class IngestResponse(BaseModel):
 
 # --- Query ---
 
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+
 class QueryRequest(BaseModel):
     question: str
     top_k: int = Field(default=5, ge=1, le=20)
     model: str | None = None
     return_sources: bool = True
+    history: list[ChatMessage] = []
 
 
 class SourceChunk(BaseModel):

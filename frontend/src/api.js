@@ -24,11 +24,11 @@ export async function ingestUrl(url) {
   });
 }
 
-export async function queryDocuments(question, topK = 5) {
+export async function queryDocuments(question, topK = 5, history = []) {
   return request('/query', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ question, top_k: topK }),
+    body: JSON.stringify({ question, top_k: topK, history }),
   });
 }
 

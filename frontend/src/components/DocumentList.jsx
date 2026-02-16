@@ -7,6 +7,7 @@ export default function DocumentList() {
   const [docs, setDocs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [filter, setFilter] = useState('');
 
   async function fetchDocs() {
     setLoading(true);
@@ -39,6 +40,15 @@ export default function DocumentList() {
     return new Date(dateStr).toLocaleDateString();
   }
 
+  const needle = filter.toLowerCase();
+  const filteredDocs = needle
+    ? docs.filter(
+        (d) =>
+          d.filename.toLowerCase().includes(needle) ||
+          d.source_type.toLowerCase().includes(needle)
+      )
+    : docs;
+
   return (
     <div className="document-list">
       <div className="doc-list-header">
@@ -47,6 +57,26 @@ export default function DocumentList() {
           {loading ? 'Loading...' : 'Refresh'}
         </button>
       </div>
+
+      {docs.length > 0 && (
+        <div className="doc-filter">
+          <input
+            className="filter-input"
+            type="text"
+            placeholder="Filter by name or type..."
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+          />
+          {filter && (
+            <button className="clear-filter-btn" onClick={() => setFilter('')}>
+              Clear
+            </button>
+          )}
+          <span className="filter-count">
+            {filteredDocs.length} of {docs.length}
+          </span>
+        </div>
+      )}
 
       {error && (
         <StatusMessage
@@ -62,7 +92,13 @@ export default function DocumentList() {
         </div>
       )}
 
-      {docs.length > 0 && (
+      {docs.length > 0 && filteredDocs.length === 0 && (
+        <div className="empty-state">
+          No documents match "{filter}".
+        </div>
+      )}
+
+      {filteredDocs.length > 0 && (
         <table className="doc-table">
           <thead>
             <tr>
@@ -74,7 +110,7 @@ export default function DocumentList() {
             </tr>
           </thead>
           <tbody>
-            {docs.map((doc) => (
+            {filteredDocs.map((doc) => (
               <tr key={doc.document_id}>
                 <td>{doc.filename}</td>
                 <td>{doc.source_type}</td>
