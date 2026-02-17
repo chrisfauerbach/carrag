@@ -42,7 +42,7 @@ async def _pull_ollama_model(model: str):
         models = [m["name"] for m in resp.json().get("models", [])]
         if not any(model in m for m in models):
             logger.info(f"Pulling Ollama model: {model}")
-            resp = await client.post("/api/pull", json={"name": model})
+            resp = await client.post("/api/pull", json={"name": model, "stream": False})
             resp.raise_for_status()
             logger.info(f"Model {model} pulled successfully.")
         else:

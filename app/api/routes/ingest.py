@@ -64,7 +64,7 @@ async def ingest_url(request: IngestURLRequest):
 async def _ingest_content(document_id: str, content: str, metadata: dict, tags: list[str] | None = None) -> IngestResponse:
     """Shared logic: chunk -> embed -> index."""
     resolved_tags = tags or []
-    auto_tags = await generate_tags(content)
+    auto_tags = await generate_tags(content, filename=metadata.get("filename", ""))
     resolved_tags = list(set(resolved_tags + auto_tags))
     metadata["tags"] = resolved_tags
 

@@ -16,13 +16,13 @@ Use ONLY the context below to answer the question. If the context doesn't contai
 Always cite which source(s) you used in your answer."""
 
 
-async def generate_tags(content: str, max_tags: int = 5) -> list[str]:
+async def generate_tags(content: str, max_tags: int = 5, filename: str = "") -> list[str]:
     """Generate descriptive tags for a document using the LLM.
 
-    Truncates content to ~2000 chars and asks the LLM for comma-separated tags.
+    Truncates content to ~8000 chars and asks the LLM for comma-separated tags.
     Returns [] on any failure — auto-tagging should never block ingestion.
     """
-    truncated = content[:2000]
+    truncated = content[:8000]
     system_prompt = (
         "You are a tagging assistant for car manuals and automotive documents. "
         "Return ONLY a comma-separated list of short, lowercase tags. "
@@ -33,7 +33,8 @@ async def generate_tags(content: str, max_tags: int = 5) -> list[str]:
         "Fill remaining tags with other useful descriptors like document type "
         "(e.g. owners manual, service manual, wiring diagram) or key topics."
     )
-    user_prompt = f"Generate up to {max_tags} short descriptive tags for this automotive document:\n\n{truncated}"
+    filename_hint = f"Filename: {filename}\n\n" if filename else ""
+    user_prompt = f"Generate up to {max_tags} short descriptive tags for this automotive document:\n\n{filename_hint}{truncated}"
 
     try:
         async with httpx.AsyncClient(base_url=settings.ollama_url, timeout=120) as client:

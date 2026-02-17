@@ -75,12 +75,12 @@ class TestGenerateTags:
         assert tags == ["research", "machine learning", "python"]
 
     async def test_truncation(self, mock_ollama_tags):
-        long_content = "x" * 5000
+        long_content = "x" * 10000
         await generate_tags(long_content)
         call_json = mock_ollama_tags.post.call_args[1]["json"]
         # The prompt should contain at most ~2000 chars of content plus the preamble
-        assert "x" * 2000 in call_json["prompt"]
-        assert "x" * 2001 not in call_json["prompt"]
+        assert "x" * 8000 in call_json["prompt"]
+        assert "x" * 8001 not in call_json["prompt"]
 
     async def test_max_tags_limit(self, mock_ollama_tags):
         mock_resp = MagicMock()
