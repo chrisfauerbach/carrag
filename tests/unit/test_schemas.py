@@ -22,7 +22,7 @@ from app.models.schemas import (
 class TestQueryRequest:
     def test_defaults(self):
         req = QueryRequest(question="What is X?")
-        assert req.top_k == 5
+        assert req.top_k == 10
         assert req.history == []
         assert req.return_sources is True
         assert req.model is None

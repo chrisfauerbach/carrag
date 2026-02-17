@@ -161,12 +161,12 @@ class TestPrepareRagContext:
     async def test_tags_forwarded_to_hybrid_search(self, mock_services):
         mock_embed, mock_es, mock_reranker = mock_services
         await _prepare_rag_context("Q?", tags=["research", "ml"])
-        mock_es.hybrid_search.assert_called_once_with(FAKE_VECTOR, "Q?", top_k=5, tags=["research", "ml"])
+        mock_es.hybrid_search.assert_called_once_with(FAKE_VECTOR, "Q?", top_k=10, tags=["research", "ml"])
 
     async def test_no_tags_passes_none(self, mock_services):
         mock_embed, mock_es, mock_reranker = mock_services
         await _prepare_rag_context("Q?")
-        mock_es.hybrid_search.assert_called_once_with(FAKE_VECTOR, "Q?", top_k=5, tags=None)
+        mock_es.hybrid_search.assert_called_once_with(FAKE_VECTOR, "Q?", top_k=10, tags=None)
 
 
 class TestQueryRag:

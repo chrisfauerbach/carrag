@@ -116,7 +116,7 @@ async def _expand_context(chunks: list[dict]) -> list[dict]:
 
 
 async def _prepare_rag_context(
-    question: str, top_k: int = 5, model: str | None = None, history: list | None = None,
+    question: str, top_k: int = 10, model: str | None = None, history: list | None = None,
     tags: list[str] | None = None, rerank: bool | None = None,
 ) -> tuple[str, str, list[dict], str]:
     """Shared retrieval logic: embed -> hybrid search -> rerank -> expand -> build prompt.
@@ -195,7 +195,7 @@ async def _prepare_rag_context(
 
 
 async def query_rag(
-    question: str, top_k: int = 5, model: str | None = None, history: list | None = None,
+    question: str, top_k: int = 10, model: str | None = None, history: list | None = None,
     tags: list[str] | None = None, rerank: bool | None = None,
 ) -> dict:
     """Full RAG pipeline: embed question -> retrieve chunks -> generate answer."""
@@ -239,7 +239,7 @@ async def query_rag(
 
 
 async def query_rag_stream(
-    question: str, top_k: int = 5, model: str | None = None, history: list | None = None,
+    question: str, top_k: int = 10, model: str | None = None, history: list | None = None,
     tags: list[str] | None = None, rerank: bool | None = None,
 ) -> AsyncGenerator[dict, None]:
     """Streaming RAG pipeline: yields SSE-style event dicts.

@@ -90,7 +90,7 @@ class ElasticsearchService:
         return success
 
     async def hybrid_search(
-        self, query_vector: list[float], query_text: str, top_k: int = 5, tags: list[str] | None = None
+        self, query_vector: list[float], query_text: str, top_k: int = 10, tags: list[str] | None = None
     ) -> list[dict]:
         """Find the top-k most relevant chunks using hybrid BM25 + kNN search with manual RRF."""
         source_fields = ["content", "document_id", "chunk_index", "metadata", "created_at"]
