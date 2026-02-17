@@ -1,8 +1,10 @@
 import logging
+import time
 
 import httpx
 
 from app.config import settings
+from app.services.metrics import metrics_service, extract_ollama_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -43,12 +45,25 @@ class EmbeddingService:
         Returns a list of embedding vectors.
         """
         prefixed = [prefix + t for t in texts] if prefix else texts
+        start = time.time()
         resp = await self.client.post(
             "/api/embed",
             json={"model": settings.embedding_model, "input": prefixed},
         )
         resp.raise_for_status()
-        return resp.json()["embeddings"]
+        result = resp.json()
+        duration_ms = (time.time() - start) * 1000
+
+        ollama_metrics = extract_ollama_metrics(result)
+        metrics_service.record_background(
+            "embedding",
+            settings.embedding_model,
+            duration_ms=round(duration_ms, 1),
+            **ollama_metrics,
+            metadata={"batch_size": len(texts)},
+        )
+
+        return result["embeddings"]
 
     async def embed_single(self, text: str, prefix: str = "") -> list[float]:
         """Generate an embedding for a single text."""

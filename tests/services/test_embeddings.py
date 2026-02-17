@@ -19,9 +19,11 @@ def mock_httpx_client():
 @pytest.fixture
 def service(mock_httpx_client):
     """EmbeddingService with a mocked httpx client."""
-    svc = EmbeddingService()
-    svc._client = mock_httpx_client
-    return svc
+    with patch("app.services.embeddings.metrics_service") as mock_metrics:
+        mock_metrics.record_background = MagicMock()
+        svc = EmbeddingService()
+        svc._client = mock_httpx_client
+        yield svc
 
 
 class TestEmbedSingle:

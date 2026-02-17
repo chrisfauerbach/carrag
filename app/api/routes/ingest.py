@@ -1,5 +1,6 @@
 import uuid
 import logging
+import time
 
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 
@@ -11,6 +12,7 @@ from app.services.chunker import chunk_text
 from app.services.embeddings import embedding_service
 from app.services.elasticsearch import es_service
 from app.services.rag import generate_tags
+from app.services.metrics import metrics_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -63,6 +65,7 @@ async def ingest_url(request: IngestURLRequest):
 
 async def _ingest_content(document_id: str, content: str, metadata: dict, tags: list[str] | None = None) -> IngestResponse:
     """Shared logic: chunk -> embed -> index."""
+    start = time.time()
     resolved_tags = tags or []
     auto_tags = await generate_tags(content, filename=metadata.get("filename", ""))
     resolved_tags = list(set(resolved_tags + auto_tags))
@@ -86,6 +89,20 @@ async def _ingest_content(document_id: str, content: str, metadata: dict, tags: 
     # Store in Elasticsearch
     indexed = await es_service.index_chunks(chunks, all_embeddings, metadata, tags=resolved_tags)
     logger.info(f"Document {document_id}: {indexed} chunks indexed")
+
+    duration_ms = (time.time() - start) * 1000
+    metrics_service.record_background(
+        "ingest",
+        "",
+        duration_ms=round(duration_ms, 1),
+        document_id=document_id,
+        metadata={
+            "filename": metadata.get("filename", "unknown"),
+            "chunk_count": len(chunks),
+            "content_length": len(content),
+            "tags": resolved_tags,
+        },
+    )
 
     return IngestResponse(
         document_id=document_id,

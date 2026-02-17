@@ -83,6 +83,17 @@ def mock_embedding_service():
 
 
 @pytest.fixture
+def mock_metrics_service():
+    """Mock MetricsService — record_background is a no-op MagicMock, record is AsyncMock."""
+    svc = MagicMock()
+    svc.record = AsyncMock()
+    svc.record_background = MagicMock()
+    svc.init_index = AsyncMock()
+    svc.query = AsyncMock(return_value=[])
+    return svc
+
+
+@pytest.fixture
 def mock_chat_service():
     """AsyncMock of ChatService with all methods stubbed."""
     svc = AsyncMock()
@@ -150,11 +161,16 @@ def fake_query_rag_result():
 
 
 @pytest.fixture
-async def app_client(mock_es_service, mock_embedding_service, mock_chat_service):
+async def app_client(mock_es_service, mock_embedding_service, mock_chat_service, mock_metrics_service):
     """httpx.AsyncClient bound to the FastAPI app with patched services."""
     with (
         patch("app.services.elasticsearch.es_service", mock_es_service),
         patch("app.services.embeddings.embedding_service", mock_embedding_service),
+        patch("app.services.metrics.metrics_service", mock_metrics_service),
+        patch("app.services.embeddings.metrics_service", mock_metrics_service),
+        patch("app.services.rag.metrics_service", mock_metrics_service),
+        patch("app.api.routes.ingest.metrics_service", mock_metrics_service),
+        patch("app.api.routes.metrics.metrics_service", mock_metrics_service),
         patch("app.api.routes.ingest.es_service", mock_es_service),
         patch("app.api.routes.ingest.embedding_service", mock_embedding_service),
         patch("app.api.routes.documents.es_service", mock_es_service),
@@ -238,6 +254,7 @@ async def app_client(mock_es_service, mock_embedding_service, mock_chat_service)
             client._mock_httpx = mock_httpx_instance
             client._mock_chat = mock_chat_service
             client._mock_gen_tags = mock_gen_tags
+            client._mock_metrics = mock_metrics_service
             yield client
 
 

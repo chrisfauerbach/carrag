@@ -114,6 +114,12 @@ export async function getDocumentSimilarity(threshold = 0) {
   return request(`/documents/similarity?threshold=${threshold}`);
 }
 
+// --- Metrics ---
+
+export async function getMetrics(minutes = 60) {
+  return request(`/metrics?minutes=${minutes}`);
+}
+
 // --- Chat Sessions ---
 
 export async function createChat(title = null) {

@@ -8,6 +8,7 @@ import httpx
 from app.config import settings
 from app.services.embeddings import embedding_service
 from app.services.elasticsearch import es_service
+from app.services.metrics import metrics_service, extract_ollama_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +50,14 @@ async def generate_tags(content: str, max_tags: int = 5, filename: str = "") -> 
             )
             resp.raise_for_status()
             result = resp.json()
+
+        ollama_metrics = extract_ollama_metrics(result)
+        metrics_service.record_background(
+            "tag_generation",
+            settings.llm_model,
+            **ollama_metrics,
+            metadata={"filename": filename, "content_length": len(content)},
+        )
 
         raw = result.get("response", "")
         tags = [t.strip().lower() for t in raw.split(",") if t.strip()]
@@ -136,6 +145,15 @@ async def query_rag(
 
     duration_ms = (time.time() - start) * 1000
 
+    ollama_metrics = extract_ollama_metrics(result)
+    metrics_service.record_background(
+        "query",
+        llm_model,
+        duration_ms=round(duration_ms, 1),
+        **ollama_metrics,
+        metadata={"question_length": len(question), "top_k": top_k},
+    )
+
     return {
         "answer": result.get("response", ""),
         "sources": sources,
@@ -179,6 +197,14 @@ async def query_rag_stream(
                 chunk = json.loads(line)
                 if chunk.get("done"):
                     duration_ms = (time.time() - start) * 1000
+                    ollama_metrics = extract_ollama_metrics(chunk)
+                    metrics_service.record_background(
+                        "query_stream",
+                        llm_model,
+                        duration_ms=round(duration_ms, 1),
+                        **ollama_metrics,
+                        metadata={"question_length": len(question), "top_k": top_k},
+                    )
                     yield {
                         "type": "done",
                         "data": {

@@ -190,3 +190,22 @@ class RenameChatResponse(BaseModel):
 class ChatDeleteResponse(BaseModel):
     chat_id: str
     status: str = "deleted"
+
+
+# --- Metrics ---
+
+class MetricEvent(BaseModel):
+    timestamp: str
+    event_type: str
+    model: str
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    total_tokens: int | None = None
+    duration_ms: float | None = None
+    ollama_total_ms: float | None = None
+    metadata: dict | None = None
+
+
+class MetricsResponse(BaseModel):
+    events: list[MetricEvent]
+    total: int

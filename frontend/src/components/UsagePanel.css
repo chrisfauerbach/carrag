@@ -1,0 +1,121 @@
+.usage-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.usage-controls {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.time-range-buttons {
+  display: flex;
+  gap: 4px;
+}
+
+.time-range-buttons button {
+  padding: 4px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.time-range-buttons button:hover {
+  background: var(--color-border);
+}
+
+.time-range-buttons button.active {
+  background: var(--color-primary);
+  color: #fff;
+  border-color: var(--color-primary);
+}
+
+.usage-stats {
+  display: flex;
+  gap: 24px;
+  font-size: 0.85rem;
+}
+
+.usage-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.usage-stat .stat-label {
+  color: var(--color-text-secondary);
+  font-size: 0.75rem;
+}
+
+.usage-stat .stat-value {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-legend {
+  display: flex;
+  gap: 14px;
+  font-size: 0.8rem;
+  color: var(--color-text-secondary);
+}
+
+.usage-legend .legend-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.usage-legend .legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.usage-chart-container {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  overflow: hidden;
+  position: relative;
+}
+
+.usage-chart-container svg {
+  display: block;
+  width: 100%;
+  height: 400px;
+}
+
+.usage-tooltip {
+  position: absolute;
+  pointer-events: none;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  font-size: 0.8rem;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  z-index: 10;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.usage-tooltip.visible {
+  opacity: 1;
+}
+
+.usage-tooltip .tt-type {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.usage-tooltip .tt-detail {
+  color: var(--color-text-secondary);
+}

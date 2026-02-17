@@ -28,13 +28,16 @@ FAKE_CHUNKS = [
 
 @pytest.fixture
 def mock_services():
-    """Patch embedding_service and es_service used by rag module."""
+    """Patch embedding_service, es_service, and metrics_service used by rag module."""
     with (
         patch("app.services.rag.embedding_service") as mock_embed,
         patch("app.services.rag.es_service") as mock_es,
+        patch("app.services.rag.metrics_service") as mock_metrics,
     ):
         mock_embed.embed_single = AsyncMock(return_value=FAKE_VECTOR)
         mock_es.hybrid_search = AsyncMock(return_value=FAKE_CHUNKS)
+        mock_metrics.record_background = MagicMock()
+        mock_metrics.record = AsyncMock()
         yield mock_embed, mock_es
 
 
