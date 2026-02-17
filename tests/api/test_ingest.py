@@ -97,7 +97,7 @@ class TestIngestFile:
         )
         assert resp.status_code == 200
         data = resp.json()
-        assert data["tags"] == ["research", "ml"]
+        assert set(data["tags"]) == {"research", "ml"}
 
     async def test_empty_tags_default(self, app_client):
         resp = await app_client.post(
@@ -106,6 +106,38 @@ class TestIngestFile:
         )
         assert resp.status_code == 200
         assert resp.json()["tags"] == []
+
+    async def test_auto_tags_merged_with_user_tags(self, app_client):
+        app_client._mock_gen_tags.return_value = ["auto1", "auto2"]
+        resp = await app_client.post(
+            "/ingest/file",
+            files={"file": ("test.txt", b"Hello world content", "text/plain")},
+            data={"tags": "manual"},
+        )
+        assert resp.status_code == 200
+        tags = resp.json()["tags"]
+        assert set(tags) == {"manual", "auto1", "auto2"}
+
+    async def test_auto_tags_when_no_user_tags(self, app_client):
+        app_client._mock_gen_tags.return_value = ["auto1", "auto2"]
+        resp = await app_client.post(
+            "/ingest/file",
+            files={"file": ("test.txt", b"Hello world content", "text/plain")},
+        )
+        assert resp.status_code == 200
+        tags = resp.json()["tags"]
+        assert set(tags) == {"auto1", "auto2"}
+
+    async def test_auto_tags_deduped_with_user_tags(self, app_client):
+        app_client._mock_gen_tags.return_value = ["research", "new"]
+        resp = await app_client.post(
+            "/ingest/file",
+            files={"file": ("test.txt", b"Hello world content", "text/plain")},
+            data={"tags": "research"},
+        )
+        assert resp.status_code == 200
+        tags = resp.json()["tags"]
+        assert sorted(tags) == ["new", "research"]
 
 
 class TestIngestUrl:
@@ -186,7 +218,25 @@ class TestIngestUrl:
             )
 
         assert resp.status_code == 200
-        assert resp.json()["tags"] == ["research", "ml"]
+        assert set(resp.json()["tags"]) == {"research", "ml"}
+
+    async def test_auto_tags_merged_url(self, app_client):
+        app_client._mock_gen_tags.return_value = ["web", "article"]
+        with patch(
+            "app.api.routes.ingest.parse_url",
+            new_callable=AsyncMock,
+            return_value={
+                "content": "Web page content here.",
+                "metadata": {"filename": "https://example.com", "source_type": "web"},
+            },
+        ):
+            resp = await app_client.post(
+                "/ingest/url", json={"url": "https://example.com", "tags": ["manual"]}
+            )
+
+        assert resp.status_code == 200
+        tags = resp.json()["tags"]
+        assert set(tags) == {"manual", "web", "article"}
 
     async def test_default_empty_tags_url(self, app_client):
         with patch(

@@ -16,6 +16,47 @@ Use ONLY the context below to answer the question. If the context doesn't contai
 Always cite which source(s) you used in your answer."""
 
 
+async def generate_tags(content: str, max_tags: int = 5) -> list[str]:
+    """Generate descriptive tags for a document using the LLM.
+
+    Truncates content to ~2000 chars and asks the LLM for comma-separated tags.
+    Returns [] on any failure — auto-tagging should never block ingestion.
+    """
+    truncated = content[:2000]
+    system_prompt = (
+        "You are a tagging assistant for car manuals and automotive documents. "
+        "Return ONLY a comma-separated list of short, lowercase tags. "
+        "No numbering, no explanation, no extra text. "
+        "ALWAYS include the vehicle make (e.g. ford, toyota, bmw) and model "
+        "(e.g. f-150, camry, 3 series) as separate tags if they can be identified. "
+        "Also include the model year if present. "
+        "Fill remaining tags with other useful descriptors like document type "
+        "(e.g. owners manual, service manual, wiring diagram) or key topics."
+    )
+    user_prompt = f"Generate up to {max_tags} short descriptive tags for this automotive document:\n\n{truncated}"
+
+    try:
+        async with httpx.AsyncClient(base_url=settings.ollama_url, timeout=120) as client:
+            resp = await client.post(
+                "/api/generate",
+                json={
+                    "model": settings.llm_model,
+                    "prompt": user_prompt,
+                    "system": system_prompt,
+                    "stream": False,
+                },
+            )
+            resp.raise_for_status()
+            result = resp.json()
+
+        raw = result.get("response", "")
+        tags = [t.strip().lower() for t in raw.split(",") if t.strip()]
+        return tags[:max_tags]
+    except Exception:
+        logger.warning("Auto-tag generation failed", exc_info=True)
+        return []
+
+
 async def _prepare_rag_context(
     question: str, top_k: int = 5, model: str | None = None, history: list | None = None, tags: list[str] | None = None
 ) -> tuple[str, str, list[dict], str]:

@@ -27,7 +27,7 @@ INDEX_MAPPING = {
                 "type": "object",
                 "enabled": True,
             },
-            "tags": {"type": "keyword"},
+            "tags": {"type": "text"},
             "created_at": {"type": "date"},
         }
     }
@@ -96,13 +96,19 @@ class ElasticsearchService:
         source_fields = ["content", "document_id", "chunk_index", "metadata", "created_at"]
 
         if tags:
+            tag_filter = {
+                "bool": {
+                    "should": [{"match": {"tags": tag}} for tag in tags],
+                    "minimum_should_match": 1,
+                }
+            }
             bm25_query = {
                 "bool": {
                     "must": {"match": {"content": {"query": query_text}}},
-                    "filter": [{"terms": {"tags": tags}}],
+                    "filter": [tag_filter],
                 }
             }
-            knn_filter = {"terms": {"tags": tags}}
+            knn_filter = tag_filter
         else:
             bm25_query = {"match": {"content": {"query": query_text}}}
             knn_filter = None

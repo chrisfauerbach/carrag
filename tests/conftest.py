@@ -162,6 +162,7 @@ async def app_client(mock_es_service, mock_embedding_service, mock_chat_service)
         patch("app.services.chat.chat_service", mock_chat_service),
         patch("app.api.routes.chats.chat_service", mock_chat_service),
         patch("app.api.routes.query.chat_service", mock_chat_service),
+        patch("app.api.routes.ingest.generate_tags", new_callable=AsyncMock) as mock_gen_tags,
         patch("app.api.routes.documents.compute_document_similarity", new_callable=AsyncMock) as mock_sim,
         patch("app.api.routes.query.query_rag", new_callable=AsyncMock) as mock_rag,
         patch("app.api.routes.query.query_rag_stream") as mock_rag_stream,
@@ -181,6 +182,8 @@ async def app_client(mock_es_service, mock_embedding_service, mock_chat_service)
         mock_httpx_instance.__aenter__ = AsyncMock(return_value=mock_httpx_instance)
         mock_httpx_instance.__aexit__ = AsyncMock(return_value=False)
         mock_httpx_cls.return_value = mock_httpx_instance
+
+        mock_gen_tags.return_value = []
 
         mock_sim.return_value = {
             "nodes": [
@@ -234,6 +237,7 @@ async def app_client(mock_es_service, mock_embedding_service, mock_chat_service)
             client._mock_sim = mock_sim
             client._mock_httpx = mock_httpx_instance
             client._mock_chat = mock_chat_service
+            client._mock_gen_tags = mock_gen_tags
             yield client
 
 

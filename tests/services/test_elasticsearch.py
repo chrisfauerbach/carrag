@@ -189,7 +189,9 @@ class TestHybridSearch:
         ]
         await service.hybrid_search([0.1] * 768, "test query", top_k=5, tags=["research"])
         bm25_body = mock_es_client.search.call_args_list[0][1]["body"]
-        assert bm25_body["query"]["bool"]["filter"] == [{"terms": {"tags": ["research"]}}]
+        tag_filter = bm25_body["query"]["bool"]["filter"][0]
+        assert tag_filter["bool"]["should"] == [{"match": {"tags": "research"}}]
+        assert tag_filter["bool"]["minimum_should_match"] == 1
 
     async def test_tags_filter_on_knn_body(self, service, mock_es_client):
         mock_es_client.search.side_effect = [
@@ -198,7 +200,8 @@ class TestHybridSearch:
         ]
         await service.hybrid_search([0.1] * 768, "test query", top_k=5, tags=["research"])
         knn_body = mock_es_client.search.call_args_list[1][1]["body"]
-        assert knn_body["knn"]["filter"] == {"terms": {"tags": ["research"]}}
+        tag_filter = knn_body["knn"]["filter"]
+        assert tag_filter["bool"]["should"] == [{"match": {"tags": "research"}}]
 
     async def test_no_tags_no_filter(self, service, mock_es_client):
         mock_es_client.search.side_effect = [

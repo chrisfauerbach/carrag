@@ -4,7 +4,7 @@ import json
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 
-from app.services.rag import query_rag, query_rag_stream, _prepare_rag_context, SYSTEM_PROMPT
+from app.services.rag import query_rag, query_rag_stream, _prepare_rag_context, generate_tags, SYSTEM_PROMPT
 
 
 FAKE_VECTOR = [0.1] * 768
@@ -52,6 +52,63 @@ def mock_ollama_generate():
         mock_client.post.return_value = mock_resp
 
         yield mock_client
+
+
+class TestGenerateTags:
+    @pytest.fixture
+    def mock_ollama_tags(self):
+        """Patch httpx.AsyncClient for generate_tags Ollama call."""
+        with patch("app.services.rag.httpx.AsyncClient") as MockClient:
+            mock_client = AsyncMock()
+            MockClient.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            MockClient.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            mock_resp = MagicMock()
+            mock_resp.raise_for_status = MagicMock()
+            mock_resp.json.return_value = {"response": "research, machine learning, python"}
+            mock_client.post.return_value = mock_resp
+
+            yield mock_client
+
+    async def test_successful_generation(self, mock_ollama_tags):
+        tags = await generate_tags("Some document content about ML research in Python.")
+        assert tags == ["research", "machine learning", "python"]
+
+    async def test_truncation(self, mock_ollama_tags):
+        long_content = "x" * 5000
+        await generate_tags(long_content)
+        call_json = mock_ollama_tags.post.call_args[1]["json"]
+        # The prompt should contain at most ~2000 chars of content plus the preamble
+        assert "x" * 2000 in call_json["prompt"]
+        assert "x" * 2001 not in call_json["prompt"]
+
+    async def test_max_tags_limit(self, mock_ollama_tags):
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {"response": "a, b, c, d, e, f, g"}
+        mock_ollama_tags.post.return_value = mock_resp
+
+        tags = await generate_tags("content", max_tags=5)
+        assert len(tags) == 5
+
+    async def test_error_returns_empty_list(self):
+        with patch("app.services.rag.httpx.AsyncClient") as MockClient:
+            mock_client = AsyncMock()
+            MockClient.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            MockClient.return_value.__aexit__ = AsyncMock(return_value=False)
+            mock_client.post.side_effect = Exception("Ollama down")
+
+            tags = await generate_tags("some content")
+            assert tags == []
+
+    async def test_normalization(self, mock_ollama_tags):
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {"response": "  Research ,  ML , , Python  "}
+        mock_ollama_tags.post.return_value = mock_resp
+
+        tags = await generate_tags("content")
+        assert tags == ["research", "ml", "python"]
 
 
 class TestPrepareRagContext:

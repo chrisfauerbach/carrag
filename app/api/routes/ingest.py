@@ -10,6 +10,7 @@ from app.services.parsers.web import parse_url
 from app.services.chunker import chunk_text
 from app.services.embeddings import embedding_service
 from app.services.elasticsearch import es_service
+from app.services.rag import generate_tags
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -63,6 +64,8 @@ async def ingest_url(request: IngestURLRequest):
 async def _ingest_content(document_id: str, content: str, metadata: dict, tags: list[str] | None = None) -> IngestResponse:
     """Shared logic: chunk -> embed -> index."""
     resolved_tags = tags or []
+    auto_tags = await generate_tags(content)
+    resolved_tags = list(set(resolved_tags + auto_tags))
     metadata["tags"] = resolved_tags
 
     chunks = chunk_text(content, document_id)
