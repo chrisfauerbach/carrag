@@ -10,15 +10,15 @@ Built with FastAPI, Elasticsearch, Ollama, and React.
 Upload PDF / TXT / URL
         │
         ▼
-  Parse ──▶ Chunk ──▶ Embed (Ollama) ──▶ Store (Elasticsearch)
+  Parse ──▶ Auto-tag (LLM) ──▶ Chunk ──▶ Embed (Ollama) ──▶ Store (Elasticsearch)
 
 Ask a question
         │
         ▼
-  Embed query ──▶ kNN search ──▶ Build prompt with context ──▶ LLM generates answer
+  Embed query ──▶ Hybrid search (BM25 + kNN) ──▶ RRF fusion ──▶ LLM generates answer
 ```
 
-Documents are parsed, split into overlapping chunks, embedded as 768-dimensional vectors, and stored in Elasticsearch. At query time, your question is embedded with the same model, the most similar chunks are retrieved via kNN search, and a local LLM generates an answer grounded in those sources.
+Documents are parsed, automatically tagged by the LLM, split into overlapping chunks, embedded as 768-dimensional vectors, and stored in Elasticsearch. At query time, your question is embedded with the same model, the most similar chunks are retrieved via hybrid search (keyword + semantic), fused with Reciprocal Rank Fusion, and a local LLM generates an answer grounded in those sources.
 
 ## Quick Start
 
@@ -53,31 +53,37 @@ Data persists in Docker volumes (`es_data`, `ollama_models`) across restarts.
 
 ### Web UI (port 3000)
 
-- **Query tab** — Chat-style interface for asking questions about your ingested documents. Supports multi-turn conversation history, renders answers in Markdown, and shows source citations with similarity scores, model info, and response time.
-- **Upload tab** — Drag-and-drop files (PDF, TXT, MD) or paste a URL to ingest web pages.
-- **Documents tab** — View and delete ingested documents. Click any document row to browse its stored chunks with full text content, chunk indices, and character ranges.
+- **Query tab** — Chat-style interface for asking questions about your ingested documents. Supports multi-turn conversation history, streaming responses, model selection, tag filtering, and shows source citations with similarity scores.
+- **Upload tab** — Drag-and-drop files (PDF, TXT, MD) or paste a URL to ingest web pages. Documents are automatically tagged by the LLM (make, model, year for automotive docs). You can also add manual tags.
+- **Documents tab** — View, tag, and delete ingested documents. Click any document row to browse its stored chunks. Includes a document similarity visualization.
 
 ### API (port 8000)
 
 ```bash
-# Upload a file
-curl -X POST http://localhost:8000/ingest/file -F "file=@paper.pdf"
+# Upload a file (auto-tagged by LLM + optional manual tags)
+curl -X POST http://localhost:8000/ingest/file \
+  -F "file=@manual.pdf" -F "tags=ford, f-150"
 
 # Ingest a web page
 curl -X POST http://localhost:8000/ingest/url \
   -H "Content-Type: application/json" \
-  -d '{"url": "https://example.com/article"}'
+  -d '{"url": "https://example.com/article", "tags": ["research"]}'
 
-# Ask a question
+# Ask a question (optionally filter by tags)
 curl -X POST http://localhost:8000/query \
   -H "Content-Type: application/json" \
-  -d '{"question": "What are the main findings?", "top_k": 5}'
+  -d '{"question": "What are the main findings?", "top_k": 5, "tags": ["ford"]}'
 
-# List documents
+# List documents (includes auto-generated tags)
 curl http://localhost:8000/documents
 
 # View a document's chunks
 curl http://localhost:8000/documents/{document_id}/chunks
+
+# Update tags on a document
+curl -X PATCH http://localhost:8000/documents/{document_id}/tags \
+  -H "Content-Type: application/json" \
+  -d '{"tags": ["ford", "f-150", "2019"]}'
 
 # Delete a document
 curl -X DELETE http://localhost:8000/documents/{document_id}
@@ -89,17 +95,19 @@ Full API documentation available at http://localhost:8000/docs (Swagger UI).
 
 ```
 frontend/       React SPA (Vite + nginx)
-  ├── nginx reverse-proxies /ingest, /query, /documents → FastAPI
+  ├── nginx reverse-proxies /ingest, /query, /documents, /chats → FastAPI
   └── served on port 3000
 
 app/             FastAPI backend
-  ├── api/routes/        HTTP endpoints
+  ├── api/routes/        HTTP endpoints (ingest, query, documents, chats)
   ├── services/
   │   ├── parsers/       PDF (PyMuPDF), text, web (trafilatura)
   │   ├── chunker.py     Recursive text splitting with overlap
   │   ├── embeddings.py  Ollama embedding client
-  │   ├── elasticsearch.py  Index management, bulk insert, kNN search
-  │   └── rag.py         Orchestration: embed → retrieve → generate
+  │   ├── elasticsearch.py  Index management, bulk insert, hybrid search
+  │   ├── rag.py         RAG orchestration + LLM auto-tag generation
+  │   ├── chat.py        Chat session persistence in ES
+  │   └── similarity.py  Document similarity (centroid cosine)
   └── models/schemas.py  Pydantic request/response models
 ```
 
@@ -114,9 +122,13 @@ app/             FastAPI backend
 
 ### Key Design Decisions
 
+- **Auto-tagging** — At ingest, the LLM reads the first 8000 chars + filename and generates up to 5 descriptive tags (automotive-focused: make, model, year). Auto-tags merge with user-supplied tags. Failures are swallowed — tagging never blocks ingestion.
+- **Partial tag matching** — Tags are stored as `text` (not `keyword`) in ES, so searching for tag "ford" matches documents tagged "ford lincoln manual".
+- **Hybrid search + RRF** — Queries run BM25 keyword search and kNN vector search concurrently, then fuse results with Reciprocal Rank Fusion for better retrieval than either method alone.
 - **Recursive chunking** — Splits on paragraph breaks first, then sentences, then words, with configurable overlap (default 200 chars) to preserve context across chunk boundaries.
 - **Batched embeddings** — Chunks are embedded in batches of 32 to balance throughput and memory.
-- **kNN with cosine similarity** — Elasticsearch's HNSW index enables fast approximate nearest-neighbor search over dense vectors.
+- **Streaming responses** — SSE streaming delivers tokens in real-time as the LLM generates answers.
+- **Persistent chat sessions** — Conversations are stored in a dedicated ES index, supporting multi-turn history.
 - **Grounded generation** — The LLM prompt includes a system message instructing it to answer only from the provided context and cite sources.
 
 ## Configuration

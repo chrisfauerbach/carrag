@@ -10,14 +10,14 @@ What happens, step by step, when you POST a document to Carrag.
 You upload a file or URL
         │
         ▼
-   ┌─────────┐     ┌──────────┐     ┌─────────┐     ┌───────────────┐
-   │  Parse   │────▶│  Chunk   │────▶│  Embed  │────▶│  Store in ES  │
-   │  (text)  │     │  (split) │     │ (Ollama)│     │  (bulk index) │
-   └─────────┘     └──────────┘     └─────────┘     └───────────────┘
-                                                             │
-                                                             ▼
-                                                     Response with
-                                                     document_id
+   ┌─────────┐     ┌───────────┐     ┌──────────┐     ┌─────────┐     ┌───────────────┐
+   │  Parse   │────▶│ Auto-tag  │────▶│  Chunk   │────▶│  Embed  │────▶│  Store in ES  │
+   │  (text)  │     │   (LLM)   │     │  (split) │     │ (Ollama)│     │  (bulk index) │
+   └─────────┘     └───────────┘     └──────────┘     └─────────┘     └───────────────┘
+                                                                               │
+                                                                               ▼
+                                                                       Response with
+                                                                       document_id + tags
 ```
 
 There are two entry points — file upload and URL — but they converge into the same pipeline after parsing.
@@ -139,6 +139,48 @@ document_id = str(uuid.uuid4())
 ```
 
 This ID ties all the chunks from this document together. It's how you later list, inspect, or delete the document.
+
+---
+
+## Step 3.5: Auto-Tag Generation
+
+**File:** `services/rag.py:generate_tags()`
+
+Before chunking, the LLM automatically generates descriptive tags for the document. This happens in `_ingest_content()` after user-supplied tags are resolved.
+
+```
+First 8000 chars of content + filename
+        │
+        ▼
+   Ollama /api/generate (llama3.2)
+   System prompt: automotive tagging assistant
+   "ALWAYS include vehicle make and model as separate tags"
+        │
+        ▼
+   Parse comma-separated response
+   Strip whitespace, lowercase, take first 5
+        │
+        ▼
+   Merge with user-supplied tags (deduplicated via set)
+```
+
+### How it works
+
+1. **Truncate** — First 8000 chars of document content (~3-4 pages) are sent to the LLM
+2. **Filename hint** — The document filename is prepended to the prompt (e.g., `Filename: 2019_Ford_F150_Owners_Manual.pdf`), which helps the LLM identify make/model/year even if the PDF text buries it
+3. **Automotive-focused prompt** — The system prompt instructs the LLM to always extract vehicle make, model, and year as separate tags, then fill remaining slots with document type or key topics
+4. **Parse** — Response is split on commas, stripped, lowercased, and capped at 5 tags
+5. **Merge** — Auto-tags are combined with any user-supplied tags using `set()` for deduplication
+6. **Graceful failure** — Any error is logged as a warning and returns `[]`. Auto-tagging never blocks ingestion
+
+### Example
+
+For a file named `2019_Ford_F150_Owners_Manual.pdf`:
+```
+Auto-generated tags: ["ford", "f-150", "2019", "owners manual", "truck"]
+User-supplied tags:  ["maintenance"]
+Final merged tags:   ["ford", "f-150", "2019", "owners manual", "truck", "maintenance"]
+```
 
 ---
 
@@ -266,11 +308,13 @@ Each chunk becomes one Elasticsearch document:
     "chunk_index": 0,                               // position in document
     "char_start":  0,                               // start offset in original
     "char_end":    1847,                             // end offset in original
+    "tags":        ["ford", "f-150", "2019", "owners manual"],  // auto + user tags
     "metadata": {                                    // from the parser
         "filename": "my-document.pdf",
         "source_type": "pdf",
         "total_pages": 12,
-        "pages_with_text": 10
+        "pages_with_text": 10,
+        "tags": ["ford", "f-150", "2019", "owners manual"]
     },
     "created_at":  "2026-02-16T15:00:00+00:00"
 }
@@ -292,7 +336,7 @@ es_client.indices.refresh()   ← makes documents immediately searchable
 
 ### The ES index schema
 
-Created once at app startup. Two fields drive search:
+Created once at app startup. Key fields:
 
 ```
 content: text            ← standard full-text field (BM25 keyword matching)
@@ -301,6 +345,9 @@ embedding: dense_vector
   ├── dims: 768          (matches nomic-embed-text output)
   ├── index: true        (builds HNSW index for fast kNN search)
   └── similarity: cosine (how vectors are compared)
+
+tags: text               ← tokenized for partial matching
+                           (e.g. "ford" matches "ford lincoln manual")
 ```
 
 ---
@@ -314,11 +361,12 @@ After bulk indexing completes, the API returns:
     "document_id": "a3f1b2c4-5678-9def-abcd-ef1234567890",
     "filename": "my-document.pdf",
     "chunk_count": 7,
+    "tags": ["ford", "f-150", "2019", "owners manual", "truck"],
     "status": "ingested"
 }
 ```
 
-You keep the `document_id` to query against this document or delete it later.
+You keep the `document_id` to query against this document or delete it later. The `tags` field shows both auto-generated and user-supplied tags.
 
 ---
 
@@ -335,6 +383,11 @@ Time ──▶
 ├─ Validate extracted text is not empty
 ├─ Generate UUID for document_id
 │
+├─ Auto-tag via LLM
+│   └─ Send first 8000 chars + filename to Ollama /api/generate
+│   └─ Parse comma-separated tags (up to 5)
+│   └─ Merge with user-supplied tags (deduped)
+│
 ├─ Chunker splits text
 │   └─ Try "\n\n" → "\n" → ". " → " " → hard split
 │   └─ Merge small pieces, respect 2000 char limit
@@ -346,10 +399,10 @@ Time ──▶
 │   └─ ...
 │
 ├─ Bulk index into Elasticsearch
-│   └─ One ES doc per chunk: text + vector + metadata
+│   └─ One ES doc per chunk: text + vector + tags + metadata
 │   └─ Refresh index (makes searchable immediately)
 │
-└─ Return {document_id, filename, chunk_count, status}
+└─ Return {document_id, filename, chunk_count, tags, status}
 ```
 
 ---
@@ -359,13 +412,14 @@ Time ──▶
 Once documents are stored, querying uses hybrid search (BM25 keywords + kNN vectors) to find relevant chunks, then passes them to the LLM.
 
 ```
-POST /query {"question": "What is X?"}
+POST /query {"question": "What is X?", "tags": ["ford"]}
         │
         ▼
    Embed the question  ──▶  Ollama /api/embed  ──▶  768-dim query vector
         │
         ▼
    Hybrid search (two ES queries run concurrently via asyncio.gather)
+   Optional tag filter applied to both queries (partial match via text field)
         │
         ├──▶  BM25 match on "content" field  ──▶  top-k by keyword relevance
         │
@@ -379,7 +433,7 @@ POST /query {"question": "What is X?"}
    Build prompt with top-k fused results
         │
         ▼
-   Ollama /api/generate (llama3.2)
+   Ollama /api/generate (llama3.2)  — or POST /query/stream for SSE streaming
         │
         ▼
    Return {answer, sources with RRF scores, model, duration_ms}
