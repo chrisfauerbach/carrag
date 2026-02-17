@@ -209,3 +209,35 @@ class MetricEvent(BaseModel):
 class MetricsResponse(BaseModel):
     events: list[MetricEvent]
     total: int
+
+
+# --- Prompts ---
+
+class PromptInfo(BaseModel):
+    key: str
+    name: str
+    description: str
+    content: str
+    variables: list[str]
+    updated_at: str | None = None
+
+
+class PromptListResponse(BaseModel):
+    prompts: list[PromptInfo]
+    total: int
+
+
+class UpdatePromptRequest(BaseModel):
+    content: str
+
+
+class PromptUpdateResponse(BaseModel):
+    key: str
+    content: str
+    updated_at: str
+
+
+class PromptResetResponse(BaseModel):
+    key: str
+    content: str
+    updated_at: str

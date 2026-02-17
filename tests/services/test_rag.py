@@ -4,7 +4,8 @@ import json
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 
-from app.services.rag import query_rag, query_rag_stream, _prepare_rag_context, generate_tags, SYSTEM_PROMPT
+from app.services.rag import query_rag, query_rag_stream, _prepare_rag_context, generate_tags
+from app.services.prompts import DEFAULT_PROMPTS
 
 
 FAKE_VECTOR = [0.1] * 768
@@ -28,16 +29,23 @@ FAKE_CHUNKS = [
 
 @pytest.fixture
 def mock_services():
-    """Patch embedding_service, es_service, and metrics_service used by rag module."""
+    """Patch embedding_service, es_service, metrics_service, and prompts_service used by rag module."""
     with (
         patch("app.services.rag.embedding_service") as mock_embed,
         patch("app.services.rag.es_service") as mock_es,
         patch("app.services.rag.metrics_service") as mock_metrics,
+        patch("app.services.rag.prompts_service") as mock_prompts,
     ):
         mock_embed.embed_single = AsyncMock(return_value=FAKE_VECTOR)
         mock_es.hybrid_search = AsyncMock(return_value=FAKE_CHUNKS)
         mock_metrics.record_background = MagicMock()
         mock_metrics.record = AsyncMock()
+        # Return default prompts from the mock
+        async def _get_prompt(key):
+            if key in DEFAULT_PROMPTS:
+                return {**DEFAULT_PROMPTS[key], "default_content": DEFAULT_PROMPTS[key]["content"]}
+            return None
+        mock_prompts.get_prompt = AsyncMock(side_effect=_get_prompt)
         yield mock_embed, mock_es
 
 
@@ -120,7 +128,7 @@ class TestPrepareRagContext:
 
         assert "What is X?" in prompt
         assert "[Source 1: doc.txt]" in prompt
-        assert system_prompt == SYSTEM_PROMPT
+        assert system_prompt == DEFAULT_PROMPTS["rag_system"]["content"]
         assert len(sources) == 2
         assert sources[0]["content"] == "First chunk content."
         assert llm_model == "llama3.2"
@@ -173,7 +181,7 @@ class TestQueryRag:
         assert "[Source 1: doc.txt]" in prompt
         assert "First chunk content." in prompt
         assert "[Source 2: doc.txt]" in prompt
-        assert call_json["system"] == SYSTEM_PROMPT
+        assert call_json["system"] == DEFAULT_PROMPTS["rag_system"]["content"]
 
     async def test_history_included_in_prompt(self, mock_services, mock_ollama_generate):
         history = [

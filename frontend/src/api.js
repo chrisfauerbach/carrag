@@ -151,3 +151,25 @@ export async function renameChat(chatId, title) {
 export async function deleteChat(chatId) {
   return request(`/chats/${chatId}`, { method: 'DELETE' });
 }
+
+// --- Prompts ---
+
+export async function listPrompts() {
+  return request('/prompts');
+}
+
+export async function getPrompt(key) {
+  return request(`/prompts/${key}`);
+}
+
+export async function updatePrompt(key, content) {
+  return request(`/prompts/${key}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content }),
+  });
+}
+
+export async function resetPrompt(key) {
+  return request(`/prompts/${key}/reset`, { method: 'POST' });
+}

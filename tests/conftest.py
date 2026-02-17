@@ -59,6 +59,7 @@ def mock_es_service():
         {"content": "chunk text 3", "chunk_index": 2, "char_start": 24, "char_end": 36},
     ])
     svc.delete_document = AsyncMock(return_value=3)
+    svc.find_document_by_source = AsyncMock(return_value=None)
     svc.get_all_embeddings_by_document = AsyncMock(return_value={})
     svc.close = AsyncMock()
     return svc
@@ -144,6 +145,43 @@ def mock_chat_service():
 
 
 @pytest.fixture
+def mock_prompts_service():
+    """AsyncMock of PromptsService with all methods stubbed."""
+    svc = AsyncMock()
+    svc.init_index = AsyncMock()
+    svc.get_prompt = AsyncMock(return_value={
+        "key": "rag_system",
+        "name": "RAG System Prompt",
+        "description": "Instructions for how the LLM answers RAG queries",
+        "content": "You are a helpful assistant...",
+        "variables": [],
+        "default_content": "You are a helpful assistant...",
+        "updated_at": "2026-01-01T00:00:00+00:00",
+    })
+    svc.list_prompts = AsyncMock(return_value=[
+        {
+            "key": "rag_system",
+            "name": "RAG System Prompt",
+            "description": "Instructions for how the LLM answers RAG queries",
+            "content": "You are a helpful assistant...",
+            "variables": [],
+            "updated_at": "2026-01-01T00:00:00+00:00",
+        }
+    ])
+    svc.update_prompt = AsyncMock(return_value={
+        "key": "rag_system",
+        "content": "Updated content",
+        "updated_at": "2026-01-01T00:00:01+00:00",
+    })
+    svc.reset_prompt = AsyncMock(return_value={
+        "key": "rag_system",
+        "content": "Default content",
+        "updated_at": "2026-01-01T00:00:02+00:00",
+    })
+    return svc
+
+
+@pytest.fixture
 def fake_query_rag_result():
     """Dict matching query_rag() return shape."""
     return {
@@ -161,29 +199,49 @@ def fake_query_rag_result():
 
 
 @pytest.fixture
-async def app_client(mock_es_service, mock_embedding_service, mock_chat_service, mock_metrics_service):
+async def app_client(mock_es_service, mock_embedding_service, mock_chat_service, mock_metrics_service, mock_prompts_service):
     """httpx.AsyncClient bound to the FastAPI app with patched services."""
-    with (
-        patch("app.services.elasticsearch.es_service", mock_es_service),
-        patch("app.services.embeddings.embedding_service", mock_embedding_service),
-        patch("app.services.metrics.metrics_service", mock_metrics_service),
-        patch("app.services.embeddings.metrics_service", mock_metrics_service),
-        patch("app.services.rag.metrics_service", mock_metrics_service),
-        patch("app.api.routes.ingest.metrics_service", mock_metrics_service),
-        patch("app.api.routes.metrics.metrics_service", mock_metrics_service),
-        patch("app.api.routes.ingest.es_service", mock_es_service),
-        patch("app.api.routes.ingest.embedding_service", mock_embedding_service),
-        patch("app.api.routes.documents.es_service", mock_es_service),
-        patch("app.services.similarity.es_service", mock_es_service),
-        patch("app.services.chat.chat_service", mock_chat_service),
-        patch("app.api.routes.chats.chat_service", mock_chat_service),
-        patch("app.api.routes.query.chat_service", mock_chat_service),
-        patch("app.api.routes.ingest.generate_tags", new_callable=AsyncMock) as mock_gen_tags,
-        patch("app.api.routes.documents.compute_document_similarity", new_callable=AsyncMock) as mock_sim,
-        patch("app.api.routes.query.query_rag", new_callable=AsyncMock) as mock_rag,
-        patch("app.api.routes.query.query_rag_stream") as mock_rag_stream,
-        patch("app.api.routes.query.HttpxClient") as mock_httpx_cls,
-    ):
+    from contextlib import ExitStack, asynccontextmanager
+
+    with ExitStack() as stack:
+        # Patch service singletons
+        for target, mock_obj in [
+            ("app.services.elasticsearch.es_service", mock_es_service),
+            ("app.services.embeddings.embedding_service", mock_embedding_service),
+            ("app.services.metrics.metrics_service", mock_metrics_service),
+            ("app.services.embeddings.metrics_service", mock_metrics_service),
+            ("app.services.rag.metrics_service", mock_metrics_service),
+            ("app.api.routes.ingest.metrics_service", mock_metrics_service),
+            ("app.api.routes.metrics.metrics_service", mock_metrics_service),
+            ("app.api.routes.ingest.es_service", mock_es_service),
+            ("app.api.routes.ingest.embedding_service", mock_embedding_service),
+            ("app.api.routes.documents.es_service", mock_es_service),
+            ("app.services.similarity.es_service", mock_es_service),
+            ("app.services.chat.chat_service", mock_chat_service),
+            ("app.api.routes.chats.chat_service", mock_chat_service),
+            ("app.api.routes.query.chat_service", mock_chat_service),
+            ("app.services.prompts.prompts_service", mock_prompts_service),
+            ("app.api.routes.prompts.prompts_service", mock_prompts_service),
+            ("app.services.rag.prompts_service", mock_prompts_service),
+        ]:
+            stack.enter_context(patch(target, mock_obj))
+
+        mock_gen_tags = stack.enter_context(
+            patch("app.api.routes.ingest.generate_tags", new_callable=AsyncMock)
+        )
+        mock_sim = stack.enter_context(
+            patch("app.api.routes.documents.compute_document_similarity", new_callable=AsyncMock)
+        )
+        mock_rag = stack.enter_context(
+            patch("app.api.routes.query.query_rag", new_callable=AsyncMock)
+        )
+        mock_rag_stream = stack.enter_context(
+            patch("app.api.routes.query.query_rag_stream")
+        )
+        mock_httpx_cls = stack.enter_context(
+            patch("app.api.routes.query.HttpxClient")
+        )
+
         # Mock Ollama /api/tags response
         mock_httpx_resp = MagicMock()
         mock_httpx_resp.json.return_value = {
@@ -235,9 +293,6 @@ async def app_client(mock_es_service, mock_embedding_service, mock_chat_service,
 
         from app.main import app
 
-        # Override lifespan to be a no-op
-        from contextlib import asynccontextmanager
-
         @asynccontextmanager
         async def _noop_lifespan(app):
             yield
@@ -255,6 +310,7 @@ async def app_client(mock_es_service, mock_embedding_service, mock_chat_service,
             client._mock_chat = mock_chat_service
             client._mock_gen_tags = mock_gen_tags
             client._mock_metrics = mock_metrics_service
+            client._mock_prompts = mock_prompts_service
             yield client
 
 

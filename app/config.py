@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     es_index: str = "carrag_chunks"
     es_chat_index: str = "carrag_chats"
     es_metrics_index: str = "carrag_metrics"
+    es_prompts_index: str = "carrag_prompts"
 
 
 settings = Settings()

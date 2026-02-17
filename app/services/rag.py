@@ -9,12 +9,9 @@ from app.config import settings
 from app.services.embeddings import embedding_service
 from app.services.elasticsearch import es_service
 from app.services.metrics import metrics_service, extract_ollama_metrics
+from app.services.prompts import prompts_service, DEFAULT_PROMPTS
 
 logger = logging.getLogger(__name__)
-
-SYSTEM_PROMPT = """You are a helpful assistant that answers questions based on the provided context.
-Use ONLY the context below to answer the question. If the context doesn't contain enough information to answer, say so clearly.
-Always cite which source(s) you used in your answer."""
 
 
 async def generate_tags(content: str, max_tags: int = 5, filename: str = "") -> list[str]:
@@ -24,18 +21,28 @@ async def generate_tags(content: str, max_tags: int = 5, filename: str = "") -> 
     Returns [] on any failure — auto-tagging should never block ingestion.
     """
     truncated = content[:8000]
-    system_prompt = (
-        "You are a tagging assistant for car manuals and automotive documents. "
-        "Return ONLY a comma-separated list of short, lowercase tags. "
-        "No numbering, no explanation, no extra text. "
-        "ALWAYS include the vehicle make (e.g. ford, toyota, bmw) and model "
-        "(e.g. f-150, camry, 3 series) as separate tags if they can be identified. "
-        "Also include the model year if present. "
-        "Fill remaining tags with other useful descriptors like document type "
-        "(e.g. owners manual, service manual, wiring diagram) or key topics."
-    )
     filename_hint = f"Filename: {filename}\n\n" if filename else ""
-    user_prompt = f"Generate up to {max_tags} short descriptive tags for this automotive document:\n\n{filename_hint}{truncated}"
+
+    try:
+        sys_prompt_doc = await prompts_service.get_prompt("autotag_system")
+        user_prompt_doc = await prompts_service.get_prompt("autotag_user")
+    except Exception:
+        sys_prompt_doc = None
+        user_prompt_doc = None
+
+    system_prompt = (
+        sys_prompt_doc["content"] if sys_prompt_doc
+        else DEFAULT_PROMPTS["autotag_system"]["content"]
+    )
+
+    if user_prompt_doc:
+        user_prompt = user_prompt_doc["content"].format(
+            max_tags=max_tags, filename_hint=filename_hint, truncated=truncated
+        )
+    else:
+        user_prompt = DEFAULT_PROMPTS["autotag_user"]["content"].format(
+            max_tags=max_tags, filename_hint=filename_hint, truncated=truncated
+        )
 
     try:
         async with httpx.AsyncClient(base_url=settings.ollama_url, timeout=120) as client:
@@ -100,12 +107,26 @@ async def _prepare_rag_context(
             history_lines.append(f"{label}: {content}")
         history_block = "\n\nConversation history:\n" + "\n".join(history_lines) + "\n"
 
-    prompt = f"""Context:
-{context}
-{history_block}
-Question: {question}
+    try:
+        sys_prompt_doc = await prompts_service.get_prompt("rag_system")
+        user_prompt_doc = await prompts_service.get_prompt("rag_user")
+    except Exception:
+        sys_prompt_doc = None
+        user_prompt_doc = None
 
-Answer based on the context above:"""
+    system_prompt = (
+        sys_prompt_doc["content"] if sys_prompt_doc
+        else DEFAULT_PROMPTS["rag_system"]["content"]
+    )
+
+    if user_prompt_doc:
+        prompt = user_prompt_doc["content"].format(
+            context=context, history_block=history_block, question=question
+        )
+    else:
+        prompt = DEFAULT_PROMPTS["rag_user"]["content"].format(
+            context=context, history_block=history_block, question=question
+        )
 
     sources = [
         {
@@ -116,7 +137,7 @@ Answer based on the context above:"""
         for c in chunks
     ]
 
-    return prompt, SYSTEM_PROMPT, sources, llm_model
+    return prompt, system_prompt, sources, llm_model
 
 
 async def query_rag(
