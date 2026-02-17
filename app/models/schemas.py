@@ -40,6 +40,7 @@ class QueryRequest(BaseModel):
     history: list[ChatMessage] = []
     chat_id: str | None = None
     tags: list[str] = []
+    rerank: bool | None = None
 
 
 class SourceChunk(BaseModel):

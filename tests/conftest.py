@@ -145,6 +145,16 @@ def mock_chat_service():
 
 
 @pytest.fixture
+def mock_reranker_service():
+    """Mock RerankerService — rerank passes through in original order."""
+    svc = MagicMock()
+    svc.enabled = False
+    svc.init = MagicMock()
+    svc.rerank = MagicMock(side_effect=lambda query, passages, top_k: passages[:top_k])
+    return svc
+
+
+@pytest.fixture
 def mock_prompts_service():
     """AsyncMock of PromptsService with all methods stubbed."""
     svc = AsyncMock()
@@ -199,7 +209,7 @@ def fake_query_rag_result():
 
 
 @pytest.fixture
-async def app_client(mock_es_service, mock_embedding_service, mock_chat_service, mock_metrics_service, mock_prompts_service):
+async def app_client(mock_es_service, mock_embedding_service, mock_chat_service, mock_metrics_service, mock_prompts_service, mock_reranker_service):
     """httpx.AsyncClient bound to the FastAPI app with patched services."""
     from contextlib import ExitStack, asynccontextmanager
 
@@ -223,6 +233,8 @@ async def app_client(mock_es_service, mock_embedding_service, mock_chat_service,
             ("app.services.prompts.prompts_service", mock_prompts_service),
             ("app.api.routes.prompts.prompts_service", mock_prompts_service),
             ("app.services.rag.prompts_service", mock_prompts_service),
+            ("app.services.reranker.reranker_service", mock_reranker_service),
+            ("app.services.rag.reranker_service", mock_reranker_service),
         ]:
             stack.enter_context(patch(target, mock_obj))
 

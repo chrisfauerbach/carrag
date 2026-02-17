@@ -29,24 +29,31 @@ FAKE_CHUNKS = [
 
 @pytest.fixture
 def mock_services():
-    """Patch embedding_service, es_service, metrics_service, and prompts_service used by rag module."""
+    """Patch embedding_service, es_service, metrics_service, prompts_service, and reranker_service used by rag module."""
     with (
         patch("app.services.rag.embedding_service") as mock_embed,
         patch("app.services.rag.es_service") as mock_es,
         patch("app.services.rag.metrics_service") as mock_metrics,
         patch("app.services.rag.prompts_service") as mock_prompts,
+        patch("app.services.rag.reranker_service") as mock_reranker,
     ):
         mock_embed.embed_single = AsyncMock(return_value=FAKE_VECTOR)
         mock_es.hybrid_search = AsyncMock(return_value=FAKE_CHUNKS)
+        mock_es.get_neighboring_chunks = AsyncMock(side_effect=lambda doc_id, idx, window=1: [
+            {"content": f"neighbor {idx}", "document_id": doc_id, "chunk_index": idx, "metadata": {"filename": "doc.txt"}},
+        ])
         mock_metrics.record_background = MagicMock()
         mock_metrics.record = AsyncMock()
+        # Reranker disabled by default — passthrough
+        mock_reranker.enabled = False
+        mock_reranker.rerank = MagicMock(side_effect=lambda q, passages, top_k: passages[:top_k])
         # Return default prompts from the mock
         async def _get_prompt(key):
             if key in DEFAULT_PROMPTS:
                 return {**DEFAULT_PROMPTS[key], "default_content": DEFAULT_PROMPTS[key]["content"]}
             return None
         mock_prompts.get_prompt = AsyncMock(side_effect=_get_prompt)
-        yield mock_embed, mock_es
+        yield mock_embed, mock_es, mock_reranker
 
 
 @pytest.fixture
@@ -147,24 +154,24 @@ class TestPrepareRagContext:
         assert "User: Hello" in prompt
 
     async def test_custom_top_k(self, mock_services):
-        mock_embed, mock_es = mock_services
+        mock_embed, mock_es, mock_reranker = mock_services
         await _prepare_rag_context("Q?", top_k=10)
         mock_es.hybrid_search.assert_called_once_with(FAKE_VECTOR, "Q?", top_k=10, tags=None)
 
     async def test_tags_forwarded_to_hybrid_search(self, mock_services):
-        mock_embed, mock_es = mock_services
+        mock_embed, mock_es, mock_reranker = mock_services
         await _prepare_rag_context("Q?", tags=["research", "ml"])
         mock_es.hybrid_search.assert_called_once_with(FAKE_VECTOR, "Q?", top_k=5, tags=["research", "ml"])
 
     async def test_no_tags_passes_none(self, mock_services):
-        mock_embed, mock_es = mock_services
+        mock_embed, mock_es, mock_reranker = mock_services
         await _prepare_rag_context("Q?")
         mock_es.hybrid_search.assert_called_once_with(FAKE_VECTOR, "Q?", top_k=5, tags=None)
 
 
 class TestQueryRag:
     async def test_full_pipeline(self, mock_services, mock_ollama_generate):
-        mock_embed, mock_es = mock_services
+        mock_embed, mock_es, mock_reranker = mock_services
         result = await query_rag("What is X?")
 
         assert result["answer"] == "Generated answer."
@@ -214,7 +221,7 @@ class TestQueryRag:
         assert result["model"] == "custom-model"
 
     async def test_custom_top_k(self, mock_services, mock_ollama_generate):
-        mock_embed, mock_es = mock_services
+        mock_embed, mock_es, mock_reranker = mock_services
         await query_rag("Q?", top_k=10)
         mock_es.hybrid_search.assert_called_once_with(FAKE_VECTOR, "Q?", top_k=10, tags=None)
 
@@ -374,3 +381,82 @@ class TestQueryRagStream:
             # Sources should have been yielded before the error
             assert len(events) == 1
             assert events[0]["type"] == "sources"
+
+
+class TestReranking:
+    async def test_reranker_called_when_enabled(self, mock_services, mock_ollama_generate):
+        mock_embed, mock_es, mock_reranker = mock_services
+        mock_reranker.enabled = True
+
+        await query_rag("Q?", top_k=5)
+
+        # Should over-retrieve: top_k * retrieval_k_multiplier (default 3)
+        call_kwargs = mock_es.hybrid_search.call_args[1]
+        assert call_kwargs["top_k"] == 15  # 5 * 3
+        mock_reranker.rerank.assert_called_once()
+
+    async def test_reranker_skipped_when_disabled(self, mock_services, mock_ollama_generate):
+        mock_embed, mock_es, mock_reranker = mock_services
+        mock_reranker.enabled = False
+
+        await query_rag("Q?", top_k=5)
+
+        call_kwargs = mock_es.hybrid_search.call_args[1]
+        assert call_kwargs["top_k"] == 5  # No multiplier
+        mock_reranker.rerank.assert_not_called()
+
+    async def test_per_query_rerank_true_overrides_disabled(self, mock_services, mock_ollama_generate):
+        mock_embed, mock_es, mock_reranker = mock_services
+        mock_reranker.enabled = False
+
+        await query_rag("Q?", top_k=5, rerank=True)
+
+        call_kwargs = mock_es.hybrid_search.call_args[1]
+        assert call_kwargs["top_k"] == 15
+        mock_reranker.rerank.assert_called_once()
+
+    async def test_per_query_rerank_false_overrides_enabled(self, mock_services, mock_ollama_generate):
+        mock_embed, mock_es, mock_reranker = mock_services
+        mock_reranker.enabled = True
+
+        await query_rag("Q?", top_k=5, rerank=False)
+
+        call_kwargs = mock_es.hybrid_search.call_args[1]
+        assert call_kwargs["top_k"] == 5
+        mock_reranker.rerank.assert_not_called()
+
+    async def test_context_expansion_called(self, mock_services, mock_ollama_generate):
+        mock_embed, mock_es, mock_reranker = mock_services
+        mock_reranker.enabled = True
+
+        await query_rag("Q?", top_k=5)
+
+        # get_neighboring_chunks should be called for context expansion
+        assert mock_es.get_neighboring_chunks.call_count > 0
+
+    async def test_stream_rerank_forwarded(self, mock_services):
+        mock_embed, mock_es, mock_reranker = mock_services
+        mock_reranker.enabled = True
+
+        with patch("app.services.rag.httpx.AsyncClient") as MockClient:
+            mock_client = AsyncMock()
+            MockClient.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            MockClient.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            mock_resp = MagicMock()
+            mock_resp.raise_for_status = MagicMock()
+            mock_resp.aiter_lines.return_value = AsyncIteratorMock([
+                json.dumps({"response": "Hi", "done": False}),
+                json.dumps({"response": "", "done": True}),
+            ])
+            mock_stream_ctx = MagicMock()
+            mock_stream_ctx.__aenter__ = AsyncMock(return_value=mock_resp)
+            mock_stream_ctx.__aexit__ = AsyncMock(return_value=False)
+            mock_client.stream = MagicMock(return_value=mock_stream_ctx)
+
+            events = []
+            async for event in query_rag_stream("Q?", rerank=True):
+                events.append(event)
+
+            # Reranker should have been called
+            mock_reranker.rerank.assert_called_once()

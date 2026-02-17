@@ -111,6 +111,30 @@ class TestQuery:
         call_kwargs = app_client._mock_rag.call_args[1]
         assert call_kwargs["tags"] is None
 
+    async def test_rerank_true_passed_through(self, app_client):
+        resp = await app_client.post(
+            "/query", json={"question": "Q?", "rerank": True}
+        )
+        assert resp.status_code == 200
+        call_kwargs = app_client._mock_rag.call_args[1]
+        assert call_kwargs["rerank"] is True
+
+    async def test_rerank_false_passed_through(self, app_client):
+        resp = await app_client.post(
+            "/query", json={"question": "Q?", "rerank": False}
+        )
+        assert resp.status_code == 200
+        call_kwargs = app_client._mock_rag.call_args[1]
+        assert call_kwargs["rerank"] is False
+
+    async def test_rerank_default_is_none(self, app_client):
+        resp = await app_client.post(
+            "/query", json={"question": "Q?"}
+        )
+        assert resp.status_code == 200
+        call_kwargs = app_client._mock_rag.call_args[1]
+        assert call_kwargs["rerank"] is None
+
 
 class TestQueryStream:
     async def test_returns_event_stream_content_type(self, app_client):

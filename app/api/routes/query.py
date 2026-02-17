@@ -39,6 +39,7 @@ async def query(request: QueryRequest):
         model=request.model,
         history=request.history,
         tags=request.tags or None,
+        rerank=request.rerank,
     )
 
     response = QueryResponse(
@@ -83,6 +84,7 @@ async def query_stream(request: QueryRequest):
                 model=request.model,
                 history=request.history,
                 tags=request.tags or None,
+                rerank=request.rerank,
             ):
                 event_type = event["type"]
                 data = json.dumps(event["data"])

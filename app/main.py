@@ -10,6 +10,7 @@ from app.api.routes import ingest, query, documents, chats, metrics, prompts
 from app.services.chat import chat_service
 from app.services.metrics import metrics_service
 from app.services.prompts import prompts_service
+from app.services.reranker import reranker_service
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,9 @@ async def lifespan(app: FastAPI):
 
     # Pull LLM model too
     await _pull_ollama_model(settings.llm_model)
+
+    # Initialize reranker (synchronous — downloads ONNX model on first boot)
+    reranker_service.init()
 
     logger.info("Startup complete.")
     yield

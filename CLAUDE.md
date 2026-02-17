@@ -38,6 +38,7 @@ app/
 │   ├── elasticsearch.py       # Index management, bulk insert, hybrid search
 │   ├── chunker.py             # Recursive text splitting with overlap
 │   ├── rag.py                 # RAG orchestration + LLM auto-tag generation
+│   ├── reranker.py            # Flashrank cross-encoder reranking
 │   ├── chat.py                # Chat session persistence in ES
 │   ├── similarity.py          # Document similarity (centroid-based cosine)
 │   └── parsers/
@@ -53,7 +54,7 @@ app/
 - `GET /health` — health check
 - `POST /ingest/file` — upload PDF/text (multipart form, optional `tags` field)
 - `POST /ingest/url` — ingest web page `{"url": "...", "tags": [...]}`
-- `POST /query` — RAG query `{"question": "...", "top_k": 5, "tags": [...]}`
+- `POST /query` — RAG query `{"question": "...", "top_k": 5, "tags": [...], "rerank": true|false|null}`
 - `POST /query/stream` — SSE streaming RAG query (sources → tokens → done)
 - `GET /query/models` — list available Ollama LLM models
 - `GET /documents` — list ingested documents (with tags)
@@ -77,17 +78,25 @@ app/
 | OLLAMA_URL | http://ollama:11434 | Ollama URL |
 | EMBEDDING_MODEL | nomic-embed-text | Embedding model (768-dim) |
 | LLM_MODEL | llama3.2 | Generation model |
-| CHUNK_SIZE | 2000 | Characters per chunk |
-| CHUNK_OVERLAP | 200 | Overlap between chunks |
+| CHUNK_SIZE | 500 | Characters per chunk |
+| CHUNK_OVERLAP | 100 | Overlap between chunks |
 | ES_INDEX | carrag_chunks | Elasticsearch index name |
+| RERANK_ENABLED | true | Enable flashrank cross-encoder reranking |
+| RERANK_MODEL | ms-marco-MiniLM-L-12-v2 | Flashrank reranker model (ONNX) |
+| RETRIEVAL_K_MULTIPLIER | 3 | Over-retrieval factor when reranking (retrieves top_k * this) |
+| CONTEXT_EXPANSION_ENABLED | true | Fetch neighboring chunks after reranking to expand context |
 
 ## Architecture Notes
 
-- Singleton service instances (`es_service`, `embedding_service`, `chat_service`) created at module level, initialized during FastAPI lifespan
+- Singleton service instances (`es_service`, `embedding_service`, `chat_service`, `reranker_service`) created at module level, initialized during FastAPI lifespan
 - Embeddings batched in groups of 32 during ingestion
 - Chunker uses recursive splitting: paragraphs → sentences → words → hard character split
+- Small chunks (500 chars) so each embedding represents a focused concept, not a vague average of multiple topics
 - ES index uses `dense_vector` with cosine similarity for kNN search
-- Query uses hybrid search: BM25 + kNN fused via manual Reciprocal Rank Fusion (RRF)
+- Query pipeline: hybrid search (BM25 + kNN) with RRF fusion → cross-encoder reranking → context expansion → LLM generation. Over-retrieves candidates (top_k × 3), reranks with flashrank to pick the best, then fetches neighboring chunks to give the LLM enough surrounding text (~1500 chars per match)
+- Reranking uses flashrank (`ms-marco-MiniLM-L-12-v2`, ONNX-based, ~50MB, no PyTorch). Cross-encoder reads question + chunk together (unlike embedding search which compares independent vectors), giving much more precise relevance scoring. ~5-20ms for 15 passages on CPU
+- Context expansion: after reranking picks the best chunks, fetches chunk_index ± 1 from the same document, merges neighbor texts, deduplicates by (document_id, chunk_index). All fetches run in parallel via asyncio.gather
+- Per-query `rerank` field (true/false/null) overrides the global `RERANK_ENABLED` setting. When reranking is off, pipeline skips reranking and context expansion, retrieves just `top_k` chunks directly
 - Tags field is `text` type (not keyword) to support partial matching (e.g. "ford" matches "ford lincoln manual")
 - Auto-tagging at ingest: LLM generates up to 5 tags from first 8000 chars + filename; automotive-focused prompt prioritizes make/model/year; merged with user-supplied tags; failures are swallowed (never blocks ingestion)
 - RAG prompt includes system message instructing the LLM to only use provided context
@@ -95,3 +104,4 @@ app/
 - Chat sessions persisted in a separate ES index (`carrag_chats`)
 - Ollama healthcheck uses `ollama list` (no curl in the image)
 - Ollama model pulls use `stream: false` to block until download completes
+- Flashrank model cached in `/app/data/flashrank_cache` (persisted via the existing `./data:/app/data` Docker volume)

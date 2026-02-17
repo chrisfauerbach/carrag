@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import time
@@ -10,6 +11,7 @@ from app.services.embeddings import embedding_service
 from app.services.elasticsearch import es_service
 from app.services.metrics import metrics_service, extract_ollama_metrics
 from app.services.prompts import prompts_service, DEFAULT_PROMPTS
+from app.services.reranker import reranker_service
 
 logger = logging.getLogger(__name__)
 
@@ -74,29 +76,81 @@ async def generate_tags(content: str, max_tags: int = 5, filename: str = "") -> 
         return []
 
 
+async def _expand_context(chunks: list[dict]) -> list[dict]:
+    """Fetch neighboring chunks for each reranked chunk and merge them.
+
+    For each chunk, fetches chunk_index +/- 1 from same document.
+    Deduplicates by (document_id, chunk_index) and merges adjacent texts.
+    """
+    if not chunks:
+        return chunks
+
+    # Fetch neighbors in parallel
+    tasks = [
+        es_service.get_neighboring_chunks(c["document_id"], c["chunk_index"], window=1)
+        for c in chunks
+    ]
+    neighbor_results = await asyncio.gather(*tasks)
+
+    expanded = []
+    seen = set()
+
+    for chunk, neighbors in zip(chunks, neighbor_results):
+        # Merge neighbor texts in order, deduplicating
+        merged_parts = []
+        for n in neighbors:
+            key = (n["document_id"], n["chunk_index"])
+            if key not in seen:
+                seen.add(key)
+                merged_parts.append(n["content"])
+
+        expanded.append({
+            "content": "\n".join(merged_parts) if merged_parts else chunk["content"],
+            "score": chunk["score"],
+            "metadata": chunk["metadata"],
+            "document_id": chunk["document_id"],
+            "chunk_index": chunk["chunk_index"],
+        })
+
+    return expanded
+
+
 async def _prepare_rag_context(
-    question: str, top_k: int = 5, model: str | None = None, history: list | None = None, tags: list[str] | None = None
+    question: str, top_k: int = 5, model: str | None = None, history: list | None = None,
+    tags: list[str] | None = None, rerank: bool | None = None,
 ) -> tuple[str, str, list[dict], str]:
-    """Shared retrieval logic: embed -> kNN -> build prompt.
+    """Shared retrieval logic: embed -> hybrid search -> rerank -> expand -> build prompt.
 
     Returns (prompt, system_prompt, sources, llm_model).
     """
     llm_model = model or settings.llm_model
 
+    # Determine if reranking is active (per-query override or global setting)
+    rerank_active = rerank if rerank is not None else reranker_service.enabled
+
     # 1. Embed the question (search_query prefix required by nomic-embed-text)
     query_vector = await embedding_service.embed_single(question, prefix="search_query: ")
 
-    # 2. Retrieve similar chunks
-    chunks = await es_service.hybrid_search(query_vector, question, top_k=top_k, tags=tags or None)
+    # 2. Retrieve similar chunks (over-retrieve if reranking)
+    retrieval_k = top_k * settings.retrieval_k_multiplier if rerank_active else top_k
+    chunks = await es_service.hybrid_search(query_vector, question, top_k=retrieval_k, tags=tags or None)
 
-    # 3. Build context from retrieved chunks
+    # 3. Rerank if active
+    if rerank_active:
+        chunks = reranker_service.rerank(question, chunks, top_k)
+
+    # 4. Context expansion — fetch neighbors for each reranked chunk
+    if rerank_active and settings.context_expansion_enabled:
+        chunks = await _expand_context(chunks)
+
+    # 5. Build context from retrieved chunks
     context_parts = []
     for i, chunk in enumerate(chunks, 1):
         source = chunk["metadata"].get("filename", "unknown")
         context_parts.append(f"[Source {i}: {source}]\n{chunk['content']}")
     context = "\n\n---\n\n".join(context_parts)
 
-    # 4. Build the prompt (with optional conversation history)
+    # 6. Build the prompt (with optional conversation history)
     history_block = ""
     if history:
         history_lines = []
@@ -141,13 +195,14 @@ async def _prepare_rag_context(
 
 
 async def query_rag(
-    question: str, top_k: int = 5, model: str | None = None, history: list | None = None, tags: list[str] | None = None
+    question: str, top_k: int = 5, model: str | None = None, history: list | None = None,
+    tags: list[str] | None = None, rerank: bool | None = None,
 ) -> dict:
     """Full RAG pipeline: embed question -> retrieve chunks -> generate answer."""
     start = time.time()
 
     prompt, system_prompt, sources, llm_model = await _prepare_rag_context(
-        question, top_k=top_k, model=model, history=history, tags=tags
+        question, top_k=top_k, model=model, history=history, tags=tags, rerank=rerank
     )
 
     # Generate answer via Ollama
@@ -184,7 +239,8 @@ async def query_rag(
 
 
 async def query_rag_stream(
-    question: str, top_k: int = 5, model: str | None = None, history: list | None = None, tags: list[str] | None = None
+    question: str, top_k: int = 5, model: str | None = None, history: list | None = None,
+    tags: list[str] | None = None, rerank: bool | None = None,
 ) -> AsyncGenerator[dict, None]:
     """Streaming RAG pipeline: yields SSE-style event dicts.
 
@@ -193,7 +249,7 @@ async def query_rag_stream(
     start = time.time()
 
     prompt, system_prompt, sources, llm_model = await _prepare_rag_context(
-        question, top_k=top_k, model=model, history=history, tags=tags
+        question, top_k=top_k, model=model, history=history, tags=tags, rerank=rerank
     )
 
     # Yield sources immediately (retrieval is done)

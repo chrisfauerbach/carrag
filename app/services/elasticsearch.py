@@ -172,6 +172,32 @@ class ElasticsearchService:
             for _id in ranked_ids
         ]
 
+    async def get_neighboring_chunks(self, document_id: str, chunk_index: int, window: int = 1) -> list[dict]:
+        """Fetch a chunk and its neighbors by document_id and chunk_index range.
+
+        Returns chunks in [chunk_index - window, chunk_index + window], sorted by chunk_index.
+        """
+        resp = await self.client.search(
+            index=settings.es_index,
+            body={
+                "query": {
+                    "bool": {
+                        "filter": [
+                            {"term": {"document_id": document_id}},
+                            {"range": {"chunk_index": {
+                                "gte": max(0, chunk_index - window),
+                                "lte": chunk_index + window,
+                            }}},
+                        ]
+                    }
+                },
+                "_source": ["content", "document_id", "chunk_index", "metadata"],
+                "sort": [{"chunk_index": "asc"}],
+                "size": 2 * window + 1,
+            },
+        )
+        return [hit["_source"] for hit in resp["hits"]["hits"]]
+
     async def update_document_tags(self, document_id: str, tags: list[str]) -> int:
         """Update tags on all chunks belonging to a document. Returns count of updated docs."""
         resp = await self.client.update_by_query(
