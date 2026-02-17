@@ -8,7 +8,7 @@ import './QueryPanel.css';
 export default function QueryPanel() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
-  const [topK, setTopK] = useState(5);
+  const [topK, setTopK] = useState(10);
   const [models, setModels] = useState([]);
   const [selectedModel, setSelectedModel] = useState('');
   const [filterTags, setFilterTags] = useState('');

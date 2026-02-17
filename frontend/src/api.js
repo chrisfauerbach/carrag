@@ -29,7 +29,7 @@ export async function getModels() {
   return request('/query/models');
 }
 
-export async function queryDocuments(question, topK = 5, history = [], model = null, chatId = null, tags = []) {
+export async function queryDocuments(question, topK = 10, history = [], model = null, chatId = null, tags = []) {
   const payload = { question, top_k: topK, history };
   if (model) payload.model = model;
   if (chatId) payload.chat_id = chatId;
@@ -51,7 +51,7 @@ export async function deleteDocument(id) {
 
 export async function queryDocumentsStream(
   question,
-  { topK = 5, history = [], model = null, chatId = null, tags = [], onToken, onSources, onDone, onError, signal }
+  { topK = 10, history = [], model = null, chatId = null, tags = [], onToken, onSources, onDone, onError, signal }
 ) {
   const payload = { question, top_k: topK, history };
   if (model) payload.model = model;
