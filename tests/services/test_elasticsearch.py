@@ -447,6 +447,43 @@ class TestGetAllEmbeddingsByDocument:
         assert "doc-2" in result
 
 
+class TestFindDocumentBySource:
+    async def test_returns_document_id_when_found(self, service, mock_es_client):
+        mock_es_client.search.return_value = {
+            "aggregations": {
+                "docs": {
+                    "buckets": [{"key": "existing-doc-id", "doc_count": 5}]
+                }
+            }
+        }
+        result = await service.find_document_by_source("test.pdf", "pdf")
+        assert result == "existing-doc-id"
+
+    async def test_returns_none_when_not_found(self, service, mock_es_client):
+        mock_es_client.search.return_value = {
+            "aggregations": {
+                "docs": {
+                    "buckets": []
+                }
+            }
+        }
+        result = await service.find_document_by_source("new.pdf", "pdf")
+        assert result is None
+
+    async def test_query_structure(self, service, mock_es_client):
+        mock_es_client.search.return_value = {
+            "aggregations": {"docs": {"buckets": []}}
+        }
+        await service.find_document_by_source("test.pdf", "pdf")
+        call_kwargs = mock_es_client.search.call_args[1]
+        body = call_kwargs["body"]
+        assert body["size"] == 0
+        filters = body["query"]["bool"]["filter"]
+        assert {"term": {"metadata.filename.keyword": "test.pdf"}} in filters
+        assert {"term": {"metadata.source_type.keyword": "pdf"}} in filters
+        assert body["aggs"]["docs"]["terms"]["field"] == "document_id"
+
+
 class TestClose:
     async def test_closes_client(self, service, mock_es_client):
         await service.close()

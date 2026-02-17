@@ -44,8 +44,23 @@ async def ingest_file(file: UploadFile = File(...), tags: str = Form("")):
 
     # Chunk, embed, store
     parsed_tags = [t.strip() for t in tags.split(",") if t.strip()]
-    document_id = str(uuid.uuid4())
-    return await _ingest_content(document_id, parsed["content"], parsed["metadata"], tags=parsed_tags)
+    source_type = parsed["metadata"].get("source_type", "unknown")
+    status = "ingested"
+
+    # Check for existing document with same filename + source_type
+    existing_id = None
+    if filename != "unknown":
+        existing_id = await es_service.find_document_by_source(filename, source_type)
+
+    if existing_id:
+        document_id = existing_id
+        await es_service.delete_document(document_id)
+        status = "updated"
+        logger.info(f"Replacing existing document {document_id} ({filename})")
+    else:
+        document_id = str(uuid.uuid4())
+
+    return await _ingest_content(document_id, parsed["content"], parsed["metadata"], tags=parsed_tags, status=status)
 
 
 @router.post("/url", response_model=IngestResponse)
@@ -59,11 +74,23 @@ async def ingest_url(request: IngestURLRequest):
     if not parsed["content"].strip():
         raise HTTPException(400, "No text content could be extracted from the URL")
 
-    document_id = str(uuid.uuid4())
-    return await _ingest_content(document_id, parsed["content"], parsed["metadata"], tags=request.tags)
+    # Check for existing document with same URL
+    url = parsed["metadata"].get("filename", request.url)
+    status = "ingested"
+    existing_id = await es_service.find_document_by_source(url, "web")
+
+    if existing_id:
+        document_id = existing_id
+        await es_service.delete_document(document_id)
+        status = "updated"
+        logger.info(f"Replacing existing document {document_id} ({url})")
+    else:
+        document_id = str(uuid.uuid4())
+
+    return await _ingest_content(document_id, parsed["content"], parsed["metadata"], tags=request.tags, status=status)
 
 
-async def _ingest_content(document_id: str, content: str, metadata: dict, tags: list[str] | None = None) -> IngestResponse:
+async def _ingest_content(document_id: str, content: str, metadata: dict, tags: list[str] | None = None, status: str = "ingested") -> IngestResponse:
     """Shared logic: chunk -> embed -> index."""
     start = time.time()
     resolved_tags = tags or []
@@ -109,6 +136,7 @@ async def _ingest_content(document_id: str, content: str, metadata: dict, tags: 
         filename=metadata.get("filename", "unknown"),
         chunk_count=len(chunks),
         tags=resolved_tags,
+        status=status,
     )
 
 

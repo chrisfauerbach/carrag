@@ -30,6 +30,7 @@ export default function UploadPanel() {
         addResult({
           name: data.filename,
           chunks: data.chunk_count,
+          updated: data.status === 'updated',
           ok: true,
         });
       } catch (err) {
@@ -74,6 +75,7 @@ export default function UploadPanel() {
       addResult({
         name: data.filename,
         chunks: data.chunk_count,
+        updated: data.status === 'updated',
         ok: true,
       });
       setUrl('');
@@ -164,7 +166,7 @@ export default function UploadPanel() {
             >
               <span>{r.name}</span>
               <span className="chunk-count">
-                {r.ok ? `${r.chunks} chunks` : r.error}
+                {r.ok ? `${r.chunks} chunks${r.updated ? ' (updated)' : ''}` : r.error}
               </span>
             </div>
           ))}

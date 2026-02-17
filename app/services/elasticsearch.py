@@ -301,6 +301,32 @@ class ElasticsearchService:
             await self.client.clear_scroll(scroll_id=scroll_id)
         return result
 
+    async def find_document_by_source(self, filename: str, source_type: str) -> str | None:
+        """Find an existing document_id by filename + source_type. Returns None if not found."""
+        resp = await self.client.search(
+            index=settings.es_index,
+            body={
+                "size": 0,
+                "query": {
+                    "bool": {
+                        "filter": [
+                            {"term": {"metadata.filename.keyword": filename}},
+                            {"term": {"metadata.source_type.keyword": source_type}},
+                        ]
+                    }
+                },
+                "aggs": {
+                    "docs": {
+                        "terms": {"field": "document_id", "size": 1}
+                    }
+                },
+            },
+        )
+        buckets = resp["aggregations"]["docs"]["buckets"]
+        if buckets:
+            return buckets[0]["key"]
+        return None
+
     async def close(self):
         if self._client:
             await self._client.close()
