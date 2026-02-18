@@ -1,20 +1,113 @@
-import { useState, useRef } from 'react';
-import { uploadFile, ingestUrl } from '../api';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { uploadFile, ingestUrl, listJobs, cancelJob } from '../api';
 import StatusMessage from './StatusMessage';
 import './UploadPanel.css';
+
+const ACTIVE_STATUSES = ['queued', 'parsing', 'tagging', 'embedding', 'indexing'];
+
+function JobEntry({ job, onCancel }) {
+  const isActive = ACTIVE_STATUSES.includes(job.status);
+  const isSuccess = job.status === 'completed';
+  const isError = job.status === 'failed';
+  const isCancelled = job.status === 'cancelled';
+
+  const statusClass = isSuccess ? 'success' : isError ? 'error' : isCancelled ? 'cancelled' : 'active';
+
+  const stageLabels = {
+    queued: 'Queued',
+    parsing: 'Parsing content...',
+    tagging: 'Generating tags...',
+    embedding: 'Embedding chunks...',
+    indexing: 'Indexing...',
+  };
+
+  const progressPercent = job.total_chunks > 0
+    ? Math.round((job.embedded_chunks / job.total_chunks) * 100)
+    : 0;
+
+  // Truncate long filenames/URLs
+  const displayName = job.filename.length > 60
+    ? job.filename.slice(0, 57) + '...'
+    : job.filename;
+
+  return (
+    <div className={`job-entry ${statusClass}`}>
+      <div className="job-header">
+        <span className="job-filename" title={job.filename}>{displayName}</span>
+        <span className={`job-badge ${statusClass}`}>{job.status}</span>
+      </div>
+
+      {isActive && (
+        <div className="job-progress">
+          <span className="job-stage">{stageLabels[job.status] || job.status}</span>
+          {job.status === 'embedding' && job.total_chunks > 0 && (
+            <div className="progress-bar">
+              <div
+                className="progress-fill"
+                style={{ width: `${progressPercent}%` }}
+              />
+              <span className="progress-label">{job.embedded_chunks}/{job.total_chunks}</span>
+            </div>
+          )}
+          <button
+            className="cancel-btn"
+            onClick={() => onCancel(job.job_id)}
+            title="Cancel job"
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+
+      {isSuccess && (
+        <span className="job-result">
+          {job.chunk_count} chunks
+          {job.tags && job.tags.length > 0 && ` · ${job.tags.join(', ')}`}
+        </span>
+      )}
+
+      {isError && <span className="job-error">{job.error}</span>}
+    </div>
+  );
+}
 
 export default function UploadPanel() {
   const [url, setUrl] = useState('');
   const [tags, setTags] = useState('');
   const [dragover, setDragover] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const [results, setResults] = useState([]);
   const [error, setError] = useState('');
-  const fileInputRef = useRef(null);
+  const [jobs, setJobs] = useState([]);
+  const pollRef = useRef(null);
 
-  function addResult(entry) {
-    setResults((prev) => [entry, ...prev]);
-  }
+  const hasActiveJobs = jobs.some((j) => ACTIVE_STATUSES.includes(j.status));
+
+  const fetchJobs = useCallback(async () => {
+    try {
+      const data = await listJobs();
+      setJobs(data.jobs);
+    } catch {
+      // ignore polling errors
+    }
+  }, []);
+
+  // Load historical jobs on mount
+  useEffect(() => {
+    fetchJobs();
+  }, [fetchJobs]);
+
+  // Poll while active jobs exist
+  useEffect(() => {
+    if (hasActiveJobs) {
+      pollRef.current = setInterval(fetchJobs, 2000);
+    }
+    return () => {
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+    };
+  }, [hasActiveJobs, fetchJobs]);
 
   function parseTags() {
     return tags.split(',').map((t) => t.trim()).filter(Boolean);
@@ -26,18 +119,13 @@ export default function UploadPanel() {
     const parsed = parseTags();
     for (const file of files) {
       try {
-        const data = await uploadFile(file, parsed);
-        addResult({
-          name: data.filename,
-          chunks: data.chunk_count,
-          updated: data.status === 'updated',
-          ok: true,
-        });
+        await uploadFile(file, parsed);
       } catch (err) {
-        addResult({ name: file.name, error: err.message, ok: false });
+        setError(err.message);
       }
     }
     setUploading(false);
+    await fetchJobs();
   }
 
   function handleDrop(e) {
@@ -60,6 +148,8 @@ export default function UploadPanel() {
     fileInputRef.current?.click();
   }
 
+  const fileInputRef = useRef(null);
+
   function handleFileInput(e) {
     const files = Array.from(e.target.files);
     if (files.length) handleFiles(files);
@@ -71,22 +161,26 @@ export default function UploadPanel() {
     setUploading(true);
     setError('');
     try {
-      const data = await ingestUrl(url.trim(), parseTags());
-      addResult({
-        name: data.filename,
-        chunks: data.chunk_count,
-        updated: data.status === 'updated',
-        ok: true,
-      });
+      await ingestUrl(url.trim(), parseTags());
       setUrl('');
     } catch (err) {
-      addResult({ name: url.trim(), error: err.message, ok: false });
+      setError(err.message);
     }
     setUploading(false);
+    await fetchJobs();
   }
 
   function handleUrlKeyDown(e) {
     if (e.key === 'Enter') handleIngestUrl();
+  }
+
+  async function handleCancel(jobId) {
+    try {
+      await cancelJob(jobId);
+      await fetchJobs();
+    } catch {
+      // ignore
+    }
   }
 
   return (
@@ -156,22 +250,16 @@ export default function UploadPanel() {
         </button>
       </div>
 
-      {results.length > 0 && (
-        <div className="results-log">
-          <h3>Results</h3>
-          {results.map((r, i) => (
-            <div
-              key={i}
-              className={`result-entry ${r.ok ? 'success' : 'error'}`}
-            >
-              <span>{r.name}</span>
-              <span className="chunk-count">
-                {r.ok ? `${r.chunks} chunks${r.updated ? ' (updated)' : ''}` : r.error}
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
+      <div className="jobs-log">
+        <h3>Ingestion Jobs</h3>
+        {jobs.length === 0 ? (
+          <p className="jobs-empty">No ingestion jobs yet. Upload a file or ingest a URL to get started.</p>
+        ) : (
+          jobs.map((job) => (
+            <JobEntry key={job.job_id} job={job} onCancel={handleCancel} />
+          ))
+        )}
+      </div>
     </div>
   );
 }

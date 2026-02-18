@@ -242,3 +242,33 @@ class PromptResetResponse(BaseModel):
     key: str
     content: str
     updated_at: str
+
+
+# --- Jobs ---
+
+class JobResponse(BaseModel):
+    job_id: str
+    filename: str
+    status: str
+
+
+class JobDetailResponse(BaseModel):
+    job_id: str
+    filename: str
+    source_type: str
+    status: str
+    created_at: str
+    started_at: str | None = None
+    completed_at: str | None = None
+    total_chunks: int = 0
+    embedded_chunks: int = 0
+    current_stage: str | None = None
+    document_id: str | None = None
+    chunk_count: int | None = None
+    tags: list[str] | None = None
+    error: str | None = None
+
+
+class JobListResponse(BaseModel):
+    jobs: list[JobDetailResponse]
+    total: int

@@ -10,6 +10,7 @@ from app.config import settings
 from app.services.embeddings import embedding_service
 from app.services.elasticsearch import es_service
 from app.services.metrics import metrics_service, extract_ollama_metrics
+from app.services.ollama_semaphore import ollama_semaphore, Priority
 from app.services.prompts import prompts_service, DEFAULT_PROMPTS
 from app.services.reranker import reranker_service
 
@@ -47,18 +48,21 @@ async def generate_tags(content: str, max_tags: int = 5, filename: str = "") -> 
         )
 
     try:
-        async with httpx.AsyncClient(base_url=settings.ollama_url, timeout=120) as client:
-            resp = await client.post(
-                "/api/generate",
-                json={
-                    "model": settings.llm_model,
-                    "prompt": user_prompt,
-                    "system": system_prompt,
-                    "stream": False,
-                },
-            )
-            resp.raise_for_status()
-            result = resp.json()
+        async def _call_llm():
+            async with httpx.AsyncClient(base_url=settings.ollama_url, timeout=120) as client:
+                resp = await client.post(
+                    "/api/generate",
+                    json={
+                        "model": settings.llm_model,
+                        "prompt": user_prompt,
+                        "system": system_prompt,
+                        "stream": False,
+                    },
+                )
+                resp.raise_for_status()
+                return resp.json()
+
+        result = await ollama_semaphore.execute(Priority.TAGGING, _call_llm)
 
         ollama_metrics = extract_ollama_metrics(result)
         metrics_service.record_background(
@@ -129,7 +133,9 @@ async def _prepare_rag_context(
     rerank_active = rerank if rerank is not None else reranker_service.enabled
 
     # 1. Embed the question (search_query prefix required by nomic-embed-text)
-    query_vector = await embedding_service.embed_single(question, prefix="search_query: ")
+    query_vector = await ollama_semaphore.execute(
+        Priority.QUERY, embedding_service.embed_single, question, prefix="search_query: "
+    )
 
     # 2. Retrieve similar chunks (over-retrieve if reranking)
     retrieval_k = top_k * settings.retrieval_k_multiplier if rerank_active else top_k
@@ -206,18 +212,21 @@ async def query_rag(
     )
 
     # Generate answer via Ollama
-    async with httpx.AsyncClient(base_url=settings.ollama_url, timeout=300) as client:
-        resp = await client.post(
-            "/api/generate",
-            json={
-                "model": llm_model,
-                "prompt": prompt,
-                "system": system_prompt,
-                "stream": False,
-            },
-        )
-        resp.raise_for_status()
-        result = resp.json()
+    async def _call_llm():
+        async with httpx.AsyncClient(base_url=settings.ollama_url, timeout=300) as client:
+            resp = await client.post(
+                "/api/generate",
+                json={
+                    "model": llm_model,
+                    "prompt": prompt,
+                    "system": system_prompt,
+                    "stream": False,
+                },
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+    result = await ollama_semaphore.execute(Priority.QUERY, _call_llm)
 
     duration_ms = (time.time() - start) * 1000
 
@@ -255,41 +264,42 @@ async def query_rag_stream(
     # Yield sources immediately (retrieval is done)
     yield {"type": "sources", "data": {"sources": sources}}
 
-    # Stream generation from Ollama
-    async with httpx.AsyncClient(base_url=settings.ollama_url, timeout=300) as client:
-        async with client.stream(
-            "POST",
-            "/api/generate",
-            json={
-                "model": llm_model,
-                "prompt": prompt,
-                "system": system_prompt,
-                "stream": True,
-            },
-        ) as resp:
-            resp.raise_for_status()
-            async for line in resp.aiter_lines():
-                if not line.strip():
-                    continue
-                chunk = json.loads(line)
-                if chunk.get("done"):
-                    duration_ms = (time.time() - start) * 1000
-                    ollama_metrics = extract_ollama_metrics(chunk)
-                    metrics_service.record_background(
-                        "query_stream",
-                        llm_model,
-                        duration_ms=round(duration_ms, 1),
-                        **ollama_metrics,
-                        metadata={"question_length": len(question), "top_k": top_k},
-                    )
-                    yield {
-                        "type": "done",
-                        "data": {
-                            "model": llm_model,
-                            "duration_ms": round(duration_ms, 1),
-                        },
-                    }
-                    break
-                token = chunk.get("response", "")
-                if token:
-                    yield {"type": "token", "data": {"token": token}}
+    # Stream generation from Ollama (holds semaphore for entire stream)
+    async with ollama_semaphore.acquire(Priority.QUERY):
+        async with httpx.AsyncClient(base_url=settings.ollama_url, timeout=300) as client:
+            async with client.stream(
+                "POST",
+                "/api/generate",
+                json={
+                    "model": llm_model,
+                    "prompt": prompt,
+                    "system": system_prompt,
+                    "stream": True,
+                },
+            ) as resp:
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    if not line.strip():
+                        continue
+                    chunk = json.loads(line)
+                    if chunk.get("done"):
+                        duration_ms = (time.time() - start) * 1000
+                        ollama_metrics = extract_ollama_metrics(chunk)
+                        metrics_service.record_background(
+                            "query_stream",
+                            llm_model,
+                            duration_ms=round(duration_ms, 1),
+                            **ollama_metrics,
+                            metadata={"question_length": len(question), "top_k": top_k},
+                        )
+                        yield {
+                            "type": "done",
+                            "data": {
+                                "model": llm_model,
+                                "duration_ms": round(duration_ms, 1),
+                            },
+                        }
+                        break
+                    token = chunk.get("response", "")
+                    if token:
+                        yield {"type": "token", "data": {"token": token}}

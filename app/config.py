@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     es_chat_index: str = "carrag_chats"
     es_metrics_index: str = "carrag_metrics"
     es_prompts_index: str = "carrag_prompts"
+    es_jobs_index: str = "carrag_jobs"
     rerank_enabled: bool = True
     rerank_model: str = "ms-marco-MiniLM-L-12-v2"
     retrieval_k_multiplier: int = 3

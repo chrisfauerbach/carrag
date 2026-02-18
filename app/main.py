@@ -6,10 +6,12 @@ from fastapi import FastAPI
 from app.config import settings
 from app.services.elasticsearch import es_service
 from app.services.embeddings import embedding_service
-from app.api.routes import ingest, query, documents, chats, metrics, prompts
+from app.api.routes import ingest, query, documents, chats, metrics, prompts, jobs
 from app.services.chat import chat_service
 from app.services.metrics import metrics_service
+from app.services.ollama_semaphore import ollama_semaphore
 from app.services.prompts import prompts_service
+from app.services.jobs import job_service
 from app.services.reranker import reranker_service
 
 logger = logging.getLogger(__name__)
@@ -24,6 +26,7 @@ async def lifespan(app: FastAPI):
     await chat_service.init_index()
     await metrics_service.init_index()
     await prompts_service.init_index()
+    await job_service.init_index()
     await embedding_service.ensure_model()
 
     # Pull LLM model too
@@ -32,9 +35,13 @@ async def lifespan(app: FastAPI):
     # Initialize reranker (synchronous — downloads ONNX model on first boot)
     reranker_service.init()
 
+    # Start Ollama priority semaphore
+    ollama_semaphore.start()
+
     logger.info("Startup complete.")
     yield
 
+    await ollama_semaphore.stop()
     await es_service.close()
     await embedding_service.close()
     logger.info("Shutdown complete.")
@@ -73,6 +80,7 @@ app.include_router(documents.router, prefix="/documents", tags=["documents"])
 app.include_router(chats.router, prefix="/chats", tags=["chats"])
 app.include_router(metrics.router, prefix="/metrics", tags=["metrics"])
 app.include_router(prompts.router, prefix="/prompts", tags=["prompts"])
+app.include_router(jobs.router, prefix="/jobs", tags=["jobs"])
 
 
 @app.get("/health")

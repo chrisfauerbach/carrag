@@ -173,3 +173,17 @@ export async function updatePrompt(key, content) {
 export async function resetPrompt(key) {
   return request(`/prompts/${key}/reset`, { method: 'POST' });
 }
+
+// --- Jobs ---
+
+export async function listJobs() {
+  return request('/jobs');
+}
+
+export async function getJob(jobId) {
+  return request(`/jobs/${jobId}`);
+}
+
+export async function cancelJob(jobId) {
+  return request(`/jobs/${jobId}`, { method: 'DELETE' });
+}
